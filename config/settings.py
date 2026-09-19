@@ -2,7 +2,29 @@
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv(path: Path = BASE_DIR / ".env") -> None:
+    """Charge un .env minimal (KEY=VALUE) sans dependance externe."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
 
 
 def env(name: str, default: str = "") -> str:
@@ -12,6 +34,23 @@ def env(name: str, default: str = "") -> str:
 SECRET_KEY = env("DJANGO_SECRET_KEY", "django-insecure-jejegpt-local-dev-only")
 DEBUG = env("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = [h for h in env("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",") if h]
+
+if not DEBUG and (
+    not SECRET_KEY
+    or SECRET_KEY.startswith("django-insecure-")
+    or SECRET_KEY.startswith("change-me-")
+    or len(SECRET_KEY) < 50
+    or len(set(SECRET_KEY)) < 5
+):
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY manquante ou insecure avec DEBUG=0.")
+
+if not DEBUG:
+    SESSION_COOKIE_SECURE = env("DJANGO_SESSION_COOKIE_SECURE", "1") == "1"
+    CSRF_COOKIE_SECURE = env("DJANGO_CSRF_COOKIE_SECURE", "1") == "1"
+    SECURE_SSL_REDIRECT = env("DJANGO_SECURE_SSL_REDIRECT", "1") == "1"
+    SECURE_HSTS_SECONDS = int(env("DJANGO_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 INSTALLED_APPS = [
     "django.contrib.admin",
