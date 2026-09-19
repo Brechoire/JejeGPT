@@ -1,0 +1,42 @@
+{# Sélecteur provider + modèle style Qwen. Requiert : conversation, providers. #}
+<div class="relative" x-data="{ modelMenu: false }">
+  <button @click="modelMenu = !modelMenu" aria-haspopup="true" :aria-expanded="modelMenu"
+          class="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-[#f4f4f4] text-sm font-semibold max-w-[280px]"
+          title="{{ conversation.provider.name|default:'' }}{% if conversation.provider and conversation.model_id %} / {% endif %}{{ conversation.model_id|default:'Choisir un modèle' }}">
+    <span class="truncate">{{ conversation.model_id|default:"Choisir un modèle" }}</span>
+    <svg width="13" height="13" viewBox="0 0 16 16" class="shrink-0 text-[#6e6e6e]"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+  </button>
+
+  <div x-show="modelMenu" @click.outside="modelMenu = false" @keydown.escape.window="modelMenu = false"
+       class="absolute left-0 mt-1 w-80 max-w-[calc(100vw-3rem)] max-h-96 overflow-y-auto rounded-2xl bg-white border border-[#e5e5e5] shadow-xl p-2 z-30">
+    {% for p in providers %}
+    <p class="px-2 pt-2 pb-1 text-[0.6875rem] font-medium text-[#6e6e6e] flex items-center gap-2">
+      {{ p.name }}
+      <span class="px-1.5 rounded-full bg-[#f4f4f4]">{{ p.cached_models.count }}</span>
+    </p>
+    {% for m in p.cached_models.all %}
+    <form method="post" action="{% url 'chat:conversation_update' conversation.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="provider_id" value="{{ p.pk }}">
+      <input type="hidden" name="model_id" value="{{ m.model_id }}">
+      <button class="w-full flex items-center gap-2 px-2 py-[7px] rounded-lg text-[0.8125rem] text-left {% if conversation.provider_id == p.pk and conversation.model_id == m.model_id %}bg-[#f4f4f4] font-medium{% else %}hover:bg-[#f4f4f4]{% endif %}" title="{{ m.model_id }}{% if m.route %} — route /{{ m.route }} supportée{% endif %}">
+        <span class="flex-1 truncate">{{ m.model_id }}</span>
+        {% if m.route %}
+        <span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#ececec] text-[#424242]" title="Route /{{ m.route }} supportée">/{{ m.route }}</span>
+        {% endif %}
+        {% if conversation.provider_id == p.pk and conversation.model_id == m.model_id %}
+        <svg width="14" height="14" viewBox="0 0 16 16" class="shrink-0 text-accent"><path d="M3 8.5l3.5 3.5L13 4.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {% endif %}
+      </button>
+    </form>
+    {% empty %}
+    <p class="px-2 pb-1 text-xs text-[#6e6e6e]">Aucun modèle — <a href="{% url 'chat:settings_tab' tab='providers' %}" class="underline">Actualiser dans Paramètres</a></p>
+    {% endfor %}
+    {% empty %}
+    <p class="px-2 py-2 text-[0.8125rem] text-[#6e6e6e]">Aucun provider configuré.</p>
+    {% endfor %}
+    <div class="border-t border-[#e5e5e5] mt-1 pt-1">
+      <a href="{% url 'chat:settings_tab' tab='providers' %}" class="flex items-center gap-2 px-2 py-[7px] rounded-lg text-[0.8125rem] hover:bg-[#f4f4f4]">⚙️ Gérer les providers</a>
+    </div>
+  </div>
+</div>

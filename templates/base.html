@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr" style="font-size:{{ text_scale|default:100 }}%">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}JejeGPT{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0d0d0d',
+            accent: '#ff4d00',
+          },
+          fontFamily: {
+            sans: ['Roboto', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+          },
+        }
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'css/jejegpt.css' %}">
+</head>
+<body class="bg-white text-ink font-sans h-screen" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  {% block body %}{% endblock %}
+  <script>
+    document.body.addEventListener('htmx:afterSwap', () => { if (window.hljs) hljs.highlightAll(); });
+    // Composer autogrow façon ChatGPT : grandit avec le texte jusqu'au plafond
+    // CSS (40vh), scroll interne seulement au-delà.
+    function autogrow(el) {
+      if (!el) return;
+      el.style.height = 'auto';
+      const max = parseFloat(getComputedStyle(el).maxHeight) || Infinity;
+      el.style.height = Math.min(el.scrollHeight, max) + 'px';
+      el.style.overflowY = el.scrollHeight > max + 1 ? 'auto' : 'hidden';
+    }
+    // POST d'option sans <form> imbriqué (interdit en HTML) : recharge ensuite.
+    async function postOpt(btn) {
+      let params = {};
+      try { params = JSON.parse(btn.dataset.params || '{}'); } catch { params = {}; }
+      const form = btn.closest('form');
+      const csrfInput = form ? form.querySelector('input[name=csrfmiddlewaretoken]') : null;
+      const csrf = csrfInput ? csrfInput.value : '';
+      const body = new FormData();
+      body.append('csrfmiddlewaretoken', csrf);
+      for (const [k, v] of Object.entries(params)) body.append(k, v);
+      try {
+        await fetch(btn.dataset.url, {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}});
+        window.location.reload();
+      } catch (e) {
+        console.error(e);
+        alert('Échec de la mise à jour. Réessayez.');
+      }
+    }
+    // Recherche approfondie : envoie le contenu du composer, suit la redirection.
+    async function startResearch(btn) {
+      const form = btn.closest('form');
+      const ta = form ? form.querySelector('textarea[name=content]') : null;
+      const prompt = ta ? (ta.value || '').trim() : '';
+      if (!prompt) { alert('Écrivez d\u2019abord le sujet à rechercher.'); return; }
+      const csrfInput = form ? form.querySelector('input[name=csrfmiddlewaretoken]') : null;
+      const csrf = csrfInput ? csrfInput.value : '';
+      const body = new FormData();
+      body.append('csrfmiddlewaretoken', csrf);
+      body.append('content', prompt);
+      try {
+        const resp = await fetch(btn.dataset.url, {
+          method: 'POST', body: body,
+          headers: {'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json'},
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.redirect) { window.location.href = data.redirect; }
+        else { alert(data.error || 'Échec du lancement. Réessayez.'); }
+      } catch (e) {
+        console.error(e);
+        alert('Échec du lancement. Réessayez.');
+      }
+    }
+    function copyMsg(btn) {
+      navigator.clipboard.writeText(btn.dataset.raw || '').then(() => {
+        btn.dataset.tip = 'Copié ✓';
+        setTimeout(() => { btn.dataset.tip = 'Copier'; }, 1500);
+      });
+    }
+    // Copie du bloc de code (barre générée server-side, voir chat/md.py).
+    function copyCode(btn) {
+      const code = btn.closest('.codeblock').querySelector('code').innerText;
+      navigator.clipboard.writeText(code).then(() => {
+        const label = btn.textContent;
+        btn.textContent = 'Copié ✓';
+        setTimeout(() => { btn.textContent = label; }, 1500);
+      });
+    }
+    // Pastille Planifiées : actualisation auto sans rechargement.
+    // Interroge l'endpoint badge et affiche/masque le compteur.
+    (function() {
+      const badge = document.getElementById('sched-badge');
+      if (!badge || !badge.dataset.url) return;
+      async function refreshBadge() {
+        try {
+          const resp = await fetch(badge.dataset.url, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+          if (!resp.ok) return;
+          const data = await resp.json();
+          const n = parseInt(data.unseen || 0, 10) || 0;
+          badge.textContent = String(n);
+          badge.style.display = n > 0 ? 'flex' : 'none';
+        } catch (e) { /* silencieux : réessai au prochain tick */ }
+      }
+      setInterval(refreshBadge, 15000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBadge(); });
+    })();
+  </script>
+</body>
+</html>

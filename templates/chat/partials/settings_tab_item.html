@@ -1,0 +1,39 @@
+{# Item d'onglet paramètres. Requiert : slug, label, icon, active_tab. #}
+<a href="{% url 'chat:settings_tab' tab=slug %}"
+   class="flex items-center gap-2.5 px-3 py-2 rounded-lg whitespace-nowrap shrink-0 {% if active_tab == slug %}bg-[#f4f4f4] font-medium{% else %}hover:bg-[#f4f4f4] text-[#0d0d0d]{% endif %}">
+  {% if icon == "gear" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  {% elif icon == "bell" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2a4 4 0 00-4 4v2.5L2.8 10h10.4L12 8.5V6a4 4 0 00-4-4zM6.5 12.5a1.5 1.5 0 003 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  {% elif icon == "sliders" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/></svg>
+  {% elif icon == "plug" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M6 2v4M10 2v4M4 6h8v4a4 4 0 01-8 0V6zM8 14v-1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  {% elif icon == "mic" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="6" y="1.5" width="4" height="8" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M4 8a4 4 0 008 0M8 12.5V14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  {% elif icon == "card" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="3.5" width="13" height="9" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M1.5 6.5h13" stroke="currentColor" stroke-width="1.4"/></svg>
+  {% elif icon == "gauge" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 12.5a6 6 0 0111 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M8 12.5L11 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  {% elif icon == "chart" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 2v11a1 1 0 001 1h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5 10l3-3 2 2 3-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  {% elif icon == "server" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="4.5" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="2.5" y="9" width="11" height="4.5" rx="1" stroke="currentColor" stroke-width="1.4"/><circle cx="5" cy="4.7" r="0.8" fill="currentColor"/><circle cx="5" cy="11.2" r="0.8" fill="currentColor"/></svg>
+  {% elif icon == "db" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.5" ry="2" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" stroke="currentColor" stroke-width="1.4"/></svg>
+  {% elif icon == "cloud" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M4.5 12.5a3 3 0 01-.6-5.9 4 4 0 017.8-1A3.2 3.2 0 0111.5 12H4.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+  {% elif icon == "box" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 5.5L8 2.5l6 3v5L8 13.5 2 10.5v-5zM2 5.5L8 8.5l6-3M8 8.5v5" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+  {% elif icon == "shield" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l5 2v4c0 3.5-2.5 5.8-5 7-2.5-1.2-5-3.5-5-7v-4l5-2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+  {% elif icon == "lock" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" stroke-width="1.4"/></svg>
+  {% elif icon == "users" %}
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5.5" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M1.5 13.5a4.5 4.5 0 019 0M11 3.2a2.5 2.5 0 010 4.7M12.5 9.3a4.5 4.5 0 012 4.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  {% endif %}
+  <span class="flex-1">{{ label }}</span>
+  {% if slug != "general" and slug != "personnalisation" and slug != "providers" and slug != "donnees" %}
+  <span class="text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#6e6e6e]">Bientôt</span>
+  {% endif %}
+</a>

@@ -1,0 +1,315 @@
+/* JejeGPT — thème clair blanc, style ChatGPT */
+:root {
+  --ink: #0d0d0d;
+  --muted: #6e6e6e;
+  --accent: #ff4d00;
+  --bubble-user: #e9eef2;
+  --line: #e5e5e5;
+  --hover: #f4f4f4;
+}
+
+html, body {
+  background: #fff;
+  color: var(--ink);
+  font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+#thread {
+  scroll-behavior: smooth;
+}
+
+/* Rendu Markdown : tailles en rem pour suivre le palier de taille de texte.
+   Racine 16px : 1rem=16px, à 100 % le rendu est identique aux px d'origine. */
+.prose-jeje {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.prose-jeje p {
+  margin: 1em 0;
+}
+.prose-jeje p:first-child {
+  margin-top: 0;
+}
+.prose-jeje p:last-child {
+  margin-bottom: 0;
+}
+.prose-jeje h1, .prose-jeje h2, .prose-jeje h3, .prose-jeje h4 {
+  line-height: 1.3;
+}
+.prose-jeje h1 {
+  font-size: 1.625rem;
+  font-weight: 700;
+  margin: 1.1em 0 0.5em;
+}
+.prose-jeje h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 1em 0 0.45em;
+}
+.prose-jeje h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0.9em 0 0.4em;
+}
+.prose-jeje h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.8em 0 0.35em;
+}
+.prose-jeje h1:first-child, .prose-jeje h2:first-child,
+.prose-jeje h3:first-child, .prose-jeje h4:first-child {
+  margin-top: 0;
+}
+.prose-jeje ul, .prose-jeje ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.prose-jeje ul {
+  list-style: disc;
+}
+.prose-jeje ol {
+  list-style: decimal;
+}
+.prose-jeje li + li {
+  margin-top: 0.3em;
+}
+.prose-jeje li > ul, .prose-jeje li > ol {
+  margin-top: 0.3em;
+}
+.prose-jeje hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 1.5em 0;
+}
+.prose-jeje pre {
+  background: #f4f4f4;
+  color: #0d0d0d;
+  padding: 1rem;
+  border-radius: 0 0 0.75rem 0.75rem;
+  overflow: auto;
+  margin: 0;
+  position: relative;
+  font-size: 0.875rem;
+}
+/* En-tête bloc de code (ajouté server-side, voir chat/md.py) */
+.codeblock {
+  margin: 0.7em 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.codeblock-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #ececec;
+  color: #424242;
+  font-size: 0.75rem;
+  padding: 0.45rem 1rem;
+}
+.codeblock-bar .lang {
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.codeblock-bar button {
+  margin-left: auto;
+  padding: 0.15rem 0.6rem;
+  border-radius: 0.4rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: #0d0d0d;
+}
+.codeblock-bar button:hover {
+  background: #f4f4f4;
+}
+.prose-jeje code {
+  font-size: 0.85em;
+}
+.prose-jeje p code, .prose-jeje li code {
+  background: #f1f1f1;
+  padding: 0.1em 0.35em;
+  border-radius: 0.3rem;
+}
+.prose-jeje pre code {
+  background: transparent;
+  padding: 0;
+}
+/* Tableaux « carte » (wrapper ajouté server-side, voir chat/md.py) */
+.table-wrap {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  overflow: hidden;
+  overflow-x: auto;
+  margin: 0.9em 0;
+}
+.prose-jeje table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0;
+  font-size: 0.92em;
+}
+.prose-jeje th, .prose-jeje td {
+  padding: 0.7em 1em;
+  vertical-align: top;
+  text-align: left;
+}
+.prose-jeje thead th {
+  background: #f9f9f9;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.prose-jeje tbody tr + tr td {
+  border-top: 1px solid var(--line);
+}
+.prose-jeje a {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.prose-jeje blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 0.9em;
+  margin: 0.7em 0;
+  color: #424242;
+}
+
+/* Bulle utilisateur */
+.bubble-user {
+  background: var(--bubble-user);
+  border-radius: 1.5rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* Horodatage discret */
+.msg-time {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
+/* Heatmap d'activité (onglet Utilisation, style contributions) */
+.heat-l0 { background: #f4f4f4; }
+.heat-l1 { background: #fbd9b8; }
+.heat-l2 { background: #f8b26a; }
+.heat-l3 { background: #ff7a1a; }
+.heat-l4 { background: #c2410c; }
+
+/* Boutons d'action sous les questions + tooltips dynamiques */
+.msg-action {
+  position: relative;
+  padding: 0.35rem;
+  border-radius: 0.45rem;
+  color: #b4b4b4;
+  line-height: 0;
+}
+.msg-action:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+/* Tactile : zone de frappe ~44px sur mobile, desktop inchangé */
+@media (pointer: coarse) {
+  .msg-action {
+    padding: 0.875rem;
+  }
+}
+/* Tooltips dynamiques génériques : tout élément avec data-tip affiche
+   son explication au survol (utilisé : actions messages, stats usage). */
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: var(--ink);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-weight: 400;
+  padding: 0.25rem 0.55rem;
+  border-radius: 0.45rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 20;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+}
+[data-tip] {
+  position: relative;
+}
+
+/* Curseur de frappe pendant le stream */
+.typing-caret {
+  display: inline-block;
+  width: 0.5625rem;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: var(--ink);
+  border-radius: 2px;
+  margin-left: 2px;
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to { visibility: hidden; }
+}
+
+/* Items sidebar */
+.conv-item {
+  border-radius: 0.55rem;
+}
+.conv-item:hover {
+  background: var(--hover);
+}
+.conv-item.active {
+  background: #ececec;
+  font-weight: 500;
+}
+
+/* Composer */
+.composer {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: 0 8px 28px rgba(13, 13, 13, 0.08);
+}
+.composer:focus-within {
+  border-color: #d4d4d4;
+  box-shadow: 0 8px 32px rgba(13, 13, 13, 0.12);
+}
+.composer textarea {
+  background: transparent;
+  outline: none;
+  resize: none;
+  font-size: 1rem;
+  line-height: 1.5;
+  max-height: 40vh;
+  overflow-y: hidden;
+}
+.composer textarea::placeholder {
+  color: #9e9e9e;
+}
+
+/* Segmented control */
+.segmented {
+  background: var(--hover);
+  border-radius: 0.6rem;
+  padding: 3px;
+}
+.segmented button {
+  border-radius: 0.45rem;
+  color: #424242;
+}
+.segmented button.active {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(13, 13, 13, 0.12);
+}

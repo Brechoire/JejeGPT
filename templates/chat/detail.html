@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}{{ conversation.title }} — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="chatApp()">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <!-- ============ MAIN ============ -->
+  <main class="flex-1 flex flex-col min-w-0 relative">
+    <div class="flex justify-between items-center gap-1 px-4 pt-3">
+      <span class="w-9 flex justify-start">
+        <button x-show="!sidebarOpen" @click="sidebarOpen = true" class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Afficher le panneau" aria-label="Afficher le panneau">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+      </span>
+      <span class="flex items-center gap-1">
+      <button class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Partager (bientôt)">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><path d="M6 9l4-2.5M6 7l4 2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="4" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="4.5" r="2" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="11.5" r="2" stroke="currentColor" stroke-width="1.4"/></svg>
+      </button>
+      <button class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242] relative" title="Notifications (bientôt)">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><path d="M8 2a4 4 0 00-4 4v2.5L2.8 10h10.4L12 8.5V6a4 4 0 00-4-4zM6.5 12.5a1.5 1.5 0 003 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span class="absolute top-1 right-1 w-4 h-4 rounded-full bg-ink text-white text-[0.5625rem] flex items-center justify-center">2</span>
+      </button>
+      </span>
+    </div>
+
+    {% if has_messages %}
+    <!-- ----- État thread ----- -->
+    <div class="flex items-center gap-2 px-4 sm:px-6 pb-2 w-full max-w-3xl mx-auto">
+      {% include "chat/partials/model_picker.html" %}
+      <h1 class="text-[0.8125rem] text-[#6e6e6e] truncate flex-1 text-right">{{ conversation.title }}</h1>
+      <div class="relative">
+        <button @click="showSettings = !showSettings" class="p-1.5 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Réglages">⚙️</button>
+        <form method="post" action="{% url 'chat:conversation_update' conversation.pk %}" x-show="showSettings" @click.outside="showSettings = false" class="absolute right-0 mt-1 w-72 p-3 rounded-xl bg-white border border-[#e5e5e5] shadow-xl space-y-2 text-xs z-20">
+          {% csrf_token %}
+          <label class="block">Titre<input name="title" value="{{ conversation.title }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-1.5"></label>
+          <label class="block">Température<input name="temperature" type="number" step="0.1" min="0" max="2" value="{{ conversation.temperature }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-1.5"></label>
+          <label class="block">System prompt<textarea name="system_prompt" rows="2" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-1.5">{{ conversation.system_prompt }}</textarea></label>
+          <label class="block">Projet
+            <select name="project_id" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-1.5 bg-white">
+              <option value="">— Aucun —</option>
+              {% for p in projects %}
+              <option value="{{ p.pk }}" {% if conversation.project_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="w-full py-1.5 rounded-lg bg-ink text-white">Appliquer</button>
+        </form>
+      </div>
+      <form method="post" action="{% url 'chat:message_regenerate' conversation.pk %}" hx-post="{% url 'chat:message_regenerate' conversation.pk %}" hx-target="#thread" hx-swap="innerHTML">
+        {% csrf_token %}
+        <button class="text-xs border border-[#e5e5e5] rounded-lg px-2 py-1 hover:bg-white" title="Régénérer la dernière réponse">↻</button>
+      </form>
+    </div>
+    {% endif %}
+
+    <div x-show="streaming" class="px-4 sm:px-6 lg:px-12 pb-1"><button @click="stopStream()" class="text-xs border border-[#e5e5e5] bg-white rounded-lg px-3 py-1">⏹ Stop</button></div>
+
+    {% if research_run %}
+    <div id="research-banner" data-url="{% url 'chat:research_status' research_run.pk %}" class="px-4 sm:px-6 lg:px-12 pb-1">
+      <div class="text-xs px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 inline-block">🔍 <span id="research-step">{{ research_run.step|default:"Démarrage…" }} ({{ research_run.cycles_done }}/{{ research_run.max_cycles }})</span></div>
+    </div>
+    <script>
+    (function() {
+      var banner = document.getElementById('research-banner');
+      if (!banner) return;
+      var stepEl = document.getElementById('research-step');
+      async function poll() {
+        try {
+          const resp = await fetch(banner.dataset.url, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+          if (!resp.ok) { setTimeout(poll, 15000); return; }
+          const data = await resp.json();
+          if (data.status === 'running') {
+            if (stepEl && data.step) stepEl.textContent = data.step + ' (' + data.cycles_done + '/' + data.max_cycles + ')';
+            setTimeout(poll, 15000);
+          } else {
+            window.location.reload();
+          }
+        } catch (e) { setTimeout(poll, 15000); }
+      }
+      setTimeout(poll, 3000);
+    })();
+    </script>
+    {% endif %}
+
+    <div id="thread" class="flex-1 overflow-y-auto" {% if not has_messages %}x-show="heroStreaming"{% endif %} @scroll="followOutput = ($el.scrollHeight - $el.scrollTop - $el.clientHeight) <= 150">
+      {% if has_messages %}{% include "chat/partials/thread.html" %}{% endif %}
+    </div>
+    <div class="absolute bottom-28 left-1/2 -translate-x-1/2 z-20" x-show="!followOutput">
+      <button @click="followOutput = true; scrollThread()" class="text-xs px-3 py-1.5 rounded-full bg-ink text-white shadow-lg">↓ Dernière réponse</button>
+    </div>
+
+    {% if has_messages %}
+    <div class="w-full max-w-3xl mx-auto px-4 sm:px-6 pb-5">
+      <form method="post" action="{% url 'chat:message_send' conversation.pk %}" @submit.prevent="sendStream($el, false)" class="composer p-2 pl-3">
+        {% csrf_token %}
+        <textarea name="content" rows="1" required placeholder="Tapez / pour un accès rapide" x-init="autogrow($el)" @input="autogrow($el)" @keydown.enter.exact.prevent="$el.form.requestSubmit()" class="w-full min-w-0 px-1 py-2"></textarea>
+        <div class="composer-bar flex items-center gap-1">
+          <button type="button" class="shrink-0 p-2 rounded-full hover:bg-[#f4f4f4] text-ink" title="Pièces jointes (bientôt)">
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+          {% include "chat/partials/composer_options.html" %}
+          <span class="flex-1"></span>
+          <button class="shrink-0 w-9 h-9 rounded-full bg-ink text-white flex items-center justify-center" title="Envoyer">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 12V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </form>
+      <div class="flex items-center gap-3 mt-1.5 text-xs text-[#6e6e6e]">
+        <span>Entrée pour envoyer, ⇧+Entrée pour un saut de ligne</span>
+        <span class="truncate">{{ conversation.model_id|default:"aucun modèle" }}</span>
+        {% if last_usage %}
+        <span class="flex items-center gap-2 truncate">
+          <span data-tip="Tokens d'entrée : prompt + historique envoyés au modèle. Facturés par la plupart des providers.">{{ last_usage.prompt }} in</span>
+          <span data-tip="Tokens de sortie : texte généré par le modèle. Facturés, et base du calcul de vitesse.">{{ last_usage.completion }} out</span>
+          <span data-tip="Vitesse : tokens de sortie divisés par la durée totale, mesurée côté JejeGPT.">{{ last_usage.tps }} tok/s</span>
+          <span data-tip="Durée : aller-retour complet (réseau + génération), mesurée côté JejeGPT.">{{ last_usage.duration }}</span>
+          {% if not last_usage.success %}<span data-tip="La dernière réponse s'est soldée par une erreur provider." class="text-red-600">⚠️ erreur</span>{% endif %}
+        </span>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <!-- ----- État hero (conversation vide) ----- -->
+    <div class="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 pb-16" x-show="!heroStreaming">
+      <div class="w-full max-w-2xl">
+        <svg width="44" height="44" viewBox="0 0 26 26" aria-hidden="true" class="mb-4"><rect x="1" y="1" width="7" height="7" fill="#ff4d00"/><rect x="9.5" y="1" width="7" height="7" fill="#ff4d00"/><rect x="1" y="9.5" width="7" height="7" fill="#ff4d00"/><rect x="9.5" y="9.5" width="7" height="7" fill="#ff4d00"/><rect x="18" y="9.5" width="7" height="16" fill="#ff4d00"/><rect x="1" y="18" width="16" height="7" fill="#ff4d00"/></svg>
+        <h1 class="text-3xl sm:text-[2.25rem] leading-tight font-medium tracking-tight mb-6">Bonjour, on construit quoi ?</h1>
+        <div class="mb-2">
+          {% include "chat/partials/model_picker.html" %}
+        </div>
+        <form method="post" action="{% url 'chat:message_send' conversation.pk %}" @submit.prevent="sendStream($el, true)" class="composer p-2 pl-3">
+          {% csrf_token %}
+          <textarea name="content" rows="1" required placeholder="Tapez / pour un accès rapide" x-ref="heroInput" x-init="autogrow($el)" @input="autogrow($el)" @keydown.enter.exact.prevent="$el.form.requestSubmit()" class="w-full min-w-0 px-1 py-2"></textarea>
+          <div class="composer-bar flex items-center gap-1">
+            <button type="button" class="shrink-0 p-2 rounded-full hover:bg-[#f4f4f4]" title="Pièces jointes (bientôt)">
+              <svg width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+            {% include "chat/partials/composer_options.html" %}
+            <span class="flex-1"></span>
+            <button class="shrink-0 w-9 h-9 rounded-full bg-ink text-white flex items-center justify-center" title="Envoyer">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 12V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </form>
+        <div x-show="heroError" class="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[0.8125rem]" x-text="heroError"></div>
+        <div class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-sm">
+          <button @click="$refs.heroInput.value = 'Quelles sont les nouveautés de JejeGPT ?'; autogrow($refs.heroInput); $refs.heroInput.focus()" class="flex items-start gap-2.5 p-3.5 rounded-2xl bg-white border border-[#e5e5e5] hover:shadow-md text-left transition-shadow">
+            <svg width="17" height="17" viewBox="0 0 16 16" fill="none" class="shrink-0 mt-0.5 text-accent"><path d="M8 1l1.8 4.2L14 7l-4.2 1.8L8 13l-1.8-4.2L2 7l4.2-1.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+            <span><span class="font-medium">Nouveautés</span><br><span class="text-[#6e6e6e] text-[0.8125rem]">Découvrir JejeGPT</span></span>
+          </button>
+          <button @click="$refs.heroInput.value = 'Comment automatiser des tâches avec l’IA ?'; autogrow($refs.heroInput); $refs.heroInput.focus()" class="flex items-start gap-2.5 p-3.5 rounded-2xl bg-white border border-[#e5e5e5] hover:shadow-md text-left transition-shadow">
+            <svg width="17" height="17" viewBox="0 0 16 16" fill="none" class="shrink-0 mt-0.5 text-accent"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.5v3l2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <span><span class="font-medium">Automatiser</span><br><span class="text-[#6e6e6e] text-[0.8125rem]">Gagner du temps avec l'IA</span></span>
+          </button>
+          <button @click="$refs.heroInput.value = 'Aide-moi à connecter mes applications pour des réponses plus pertinentes.'; autogrow($refs.heroInput); $refs.heroInput.focus()" class="flex items-start gap-2.5 p-3.5 rounded-2xl bg-white border border-[#e5e5e5] hover:shadow-md text-left transition-shadow">
+            <svg width="17" height="17" viewBox="0 0 16 16" fill="none" class="shrink-0 mt-0.5 text-accent"><path d="M6 2v4M10 2v4M4 6h8v4a4 4 0 01-8 0V6zM8 14v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <span><span class="font-medium">Connecter</span><br><span class="text-[#6e6e6e] text-[0.8125rem]">Des réponses plus pertinentes</span></span>
+          </button>
+          <div class="flex items-start gap-2.5 p-3.5 rounded-2xl border border-dashed border-[#e5e5e5] text-[#6e6e6e]" title="Bientôt disponible">
+            <span class="tracking-widest mt-0.5">···</span>
+            <span><span class="font-medium">Découvrir plus</span><br><span class="text-[0.8125rem]">Bientôt disponible</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </main>
+</div>
+<script>
+function chatApp() {
+  return {
+    sidebarOpen: window.innerWidth >= 768, showSettings: false,
+    streaming: false, heroStreaming: false, heroError: '', es: null,
+    followOutput: true,
+    init() {
+      // Lien profond depuis l'historique des tâches planifiées (#msg-<id>).
+      if (window.location.hash && window.location.hash.startsWith('#msg-')) {
+        const target = document.getElementById(window.location.hash.slice(1));
+        if (target) { this.followOutput = false; setTimeout(() => this.scrollToEl(target), 100); }
+      }
+    },
+    scrollThread() {
+      const t = document.getElementById('thread');
+      if (t) t.scrollTop = t.scrollHeight;
+    },
+    scrollToEl(el) {
+      // Ancre un élément en haut du thread (mesure relative au conteneur).
+      const t = document.getElementById('thread');
+      if (t && el) t.scrollTop = Math.max(0, el.getBoundingClientRect().top - t.getBoundingClientRect().top + t.scrollTop - 12);
+    },
+    lastQuestionEl() {
+      const items = document.querySelectorAll('#thread .bubble-user');
+      return items.length ? items[items.length - 1] : null;
+    },
+    nearBottom() {
+      const t = document.getElementById('thread');
+      return t ? (t.scrollHeight - t.scrollTop - t.clientHeight) <= 150 : true;
+    },
+    appendLiveBubbles(prompt) {
+      // Même contrainte que le rendu final : #thread-box si présent
+      // (conversation existante), sinon conteneur live centré (hero) —
+      // sans quoi les bulles occupent toute la largeur pendant le stream.
+      let thread = document.getElementById('thread-box');
+      if (!thread) {
+        thread = document.getElementById('thread-live');
+        if (!thread) {
+          thread = document.createElement('div');
+          thread.id = 'thread-live';
+          thread.className = 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-2 space-y-8';
+          document.getElementById('thread').appendChild(thread);
+        }
+      }
+      const u = document.createElement('div');
+      u.className = 'flex justify-end';
+      const ub = document.createElement('div');
+      ub.className = 'bubble-user max-w-[85%] sm:max-w-[70%]';
+      ub.textContent = prompt;
+      u.appendChild(ub);
+      thread.appendChild(u);
+      const a = document.createElement('div');
+      a.className = 'flex justify-start';
+      const ab = document.createElement('div');
+      ab.className = 'w-full min-w-0';
+      const live = document.createElement('div');
+      live.className = 'prose-jeje max-w-none';
+      live.style.whiteSpace = 'pre-wrap';
+      const caret = document.createElement('span');
+      caret.className = 'typing-caret';
+      ab.appendChild(live);
+      ab.appendChild(caret);
+      a.appendChild(ab);
+      thread.appendChild(a);
+      // La question remonte en haut : la réponse naît sous les yeux.
+      this.scrollToEl(u);
+      this.followOutput = this.nearBottom();
+      return live;
+    },
+    sendStream(form, isHero) {
+      if (this.streaming) return;
+      const ta = form.querySelector('textarea[name=content]');
+      const prompt = (ta.value || '').trim();
+      if (!prompt) return;
+      if (!window.EventSource) { form.submit(); return; }  // repli POST bloquant
+      ta.value = '';
+      autogrow(ta);
+      this.heroError = '';
+      this.streaming = true;
+      this.heroStreaming = !!isHero;
+      const live = this.appendLiveBubbles(prompt);
+      const threadUrl = "{% url 'chat:thread_partial' conversation.pk %}";
+      if (this.es) this.es.close();
+      this.es = new EventSource("{% url 'chat:message_stream' conversation.pk %}?prompt=" + encodeURIComponent(prompt));
+      this.es.onmessage = (e) => {
+        try { live.textContent += JSON.parse(e.data).token; } catch {}
+        if (this.followOutput) this.scrollThread();
+      };
+      const refreshThread = () => {
+        htmx.ajax('GET', threadUrl, {target: '#thread', swap: 'innerHTML'});
+        // Après refresh : bas si suivi, sinon ancre sur la question répondue.
+        setTimeout(() => { if (this.followOutput) this.scrollThread(); else this.scrollToEl(this.lastQuestionEl()); }, 350);
+      };
+      this.es.addEventListener('error', (e) => {
+        let msg = 'Erreur provider.';
+        try { const d = JSON.parse(e.data); if (d.message) msg = d.message; } catch {}
+        this.stopStream();
+        if (isHero) { this.heroStreaming = false; this.heroError = msg; }
+        else { refreshThread(); }
+      });
+      this.es.addEventListener('done', () => {
+        this.stopStream();
+        if (isHero) { window.location.reload(); }
+        else { refreshThread(); }
+      });
+      this.es.onerror = () => {};
+    },
+    stopStream() { this.streaming = false; if (this.es) { this.es.close(); this.es = null; } }
+  }
+}
+</script>
+{% endblock %}

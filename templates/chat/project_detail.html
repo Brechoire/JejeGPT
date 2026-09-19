@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="px-4 sm:px-8 pt-5 pb-3 flex items-center gap-3">
+      <button x-show="!sidebarOpen" @click="sidebarOpen = true" class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Afficher le panneau" aria-label="Afficher le panneau">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      {% if conversation %}
+      <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      {% else %}
+      <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      {% endif %}
+      <h1 class="text-[1.25rem] font-semibold">Projet — {{ project.name }}</h1>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-4 sm:px-8 pb-10 w-full">
+      {% if messages %}
+      <div class="mb-4 space-y-2">
+        {% for message in messages %}
+        <div class="p-3 rounded-xl border text-[0.8125rem] {% if message.tags == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-green-50 border-green-200 text-green-800{% endif %}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <form method="post" action="{% url 'chat:project_update' project.pk %}" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 space-y-3 text-[0.8125rem]">
+        {% csrf_token %}
+        <label class="block">Nom<input name="name" maxlength="160" required value="{{ project.name }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+        <label class="block">Instructions (injectées dans chaque conversation du projet)
+          <textarea name="instructions" rows="4" placeholder="Ex. Tu es un expert SIGB, réponds toujours en français avec des exemples." class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">{{ project.instructions }}</textarea>
+        </label>
+        <div class="flex flex-wrap gap-2">
+          <button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Enregistrer</button>
+        </div>
+      </form>
+
+      <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Conversations ({{ project.conversations.count }})</h2>
+      {% for c in project.conversations.all %}
+      <div class="bg-white border border-[#e5e5e5] rounded-2xl px-4 py-2.5 mb-2 text-[0.8125rem] flex items-center gap-2">
+        <a href="{% url 'chat:detail' c.pk %}" class="flex-1 truncate hover:text-ink" title="{{ c.title }}">{{ c.title }}</a>
+        <span class="text-xs text-[#6e6e6e]">{{ c.updated_at|date:"d/m H:i" }}</span>
+      </div>
+      {% empty %}
+      <p class="text-[0.8125rem] text-[#6e6e6e] mb-4">Aucune conversation dans ce projet.</p>
+      {% endfor %}
+      <form method="post" action="{% url 'chat:conversation_create' %}" class="inline">
+        {% csrf_token %}
+        <input type="hidden" name="project_id" value="{{ project.pk }}">
+        <button class="mt-1 px-4 py-2 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] text-[0.8125rem]">+ Nouvelle conversation dans ce projet</button>
+      </form>
+
+      <form method="post" action="{% url 'chat:project_delete' project.pk %}" class="mt-6" onsubmit="return confirm('Supprimer le projet « {{ project.name|escapejs }} » ? Les conversations seront conservées.')">
+        {% csrf_token %}
+        <button class="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Supprimer le projet…</button>
+      </form>
+    </div>
+  </main>
+</div>
+{% endblock %}

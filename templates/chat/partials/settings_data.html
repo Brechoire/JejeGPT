@@ -1,0 +1,27 @@
+<h2 class="text-base font-semibold mb-1">Gestion des données</h2>
+<p class="text-[0.8125rem] text-[#6e6e6e] mb-5">Tout est stocké localement en SQLite. Les providers et leurs clés sont conservés lors d'un effacement.</p>
+<div class="bg-white border border-[#e5e5e5] rounded-2xl divide-y divide-[#e5e5e5] text-[0.8125rem]">
+  <div class="flex items-center px-4 py-3"><span class="text-[#424242] w-44">Conversations</span><span class="font-medium">{{ stats.conversations }}</span></div>
+  <div class="flex items-center px-4 py-3"><span class="text-[#424242] w-44">Messages</span><span class="font-medium">{{ stats.messages }}</span></div>
+  <div class="flex items-center px-4 py-3"><span class="text-[#424242] w-44">Providers</span><span class="font-medium">{{ stats.providers }}</span></div>
+  <div class="flex items-center px-4 py-3"><span class="text-[#424242] w-44">Base locale</span><span class="font-medium">{{ stats.db_size|filesizeformat }}</span></div>
+  <div class="flex items-center px-4 py-3"><span class="text-[#424242] w-44">Exports</span><span class="font-medium">{{ stats.exports }} ({{ stats.exports_size|filesizeformat }})</span></div>
+</div>
+{% if recent_exports %}
+<h3 class="text-sm font-semibold mt-5 mb-2">Exports récents</h3>
+<div class="bg-white border border-[#e5e5e5] rounded-2xl divide-y divide-[#e5e5e5] text-[0.8125rem]">
+  {% for export in recent_exports %}
+  <div class="flex items-center justify-between px-4 py-2">
+    <span class="font-medium truncate">{{ export.file_name }}</span>
+    <a href="{{ export.get_absolute_url }}" class="px-3 py-1 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">⬇ {{ export.format }}</a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+<div class="flex flex-wrap gap-2 mt-4">
+  <a href="{% url 'chat:data_export' %}" class="text-[0.8125rem] px-4 py-2 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">⬇ Exporter (JSON)</a>
+  <form method="post" action="{% url 'chat:data_clear' %}" onsubmit="return confirm('Supprimer TOUTES les conversations et messages ? Les providers seront conservés.')">
+    {% csrf_token %}
+    <button class="text-[0.8125rem] px-4 py-2 rounded-lg text-red-600 border border-red-200 hover:bg-red-50">Tout effacer…</button>
+  </form>
+</div>

@@ -1,0 +1,7 @@
+<div class="conv-item flex items-center gap-1 px-2 py-[7px] text-sm {% if conversation and c.pk == conversation.pk %}active{% endif %}">
+  <a href="{% url 'chat:detail' c.pk %}" class="flex-1 truncate" title="{{ c.title }}">{{ c.title }}</a>
+  <form method="post" action="{% url 'chat:conversation_delete' c.pk %}" onsubmit="return confirm('Supprimer cette conversation ?')">
+    {% csrf_token %}
+    <button class="text-[#b4b4b4] hover:text-red-500 px-1" title="Supprimer">×</button>
+  </form>
+</div>

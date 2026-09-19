@@ -1,0 +1,6 @@
+{% if refresh_info %}<p class="text-xs text-gray-500">{{ refresh_info }}</p>{% endif %}
+{% for p in providers %}
+<optgroup label="{{ p.name }}">
+  {% for m in p.cached_models.all %}<option value="{{ m.model_id }}" {% if conversation and conversation.model_id == m.model_id %}selected{% endif %}>{{ m.model_id }}</option>{% endfor %}
+</optgroup>
+{% endfor %}

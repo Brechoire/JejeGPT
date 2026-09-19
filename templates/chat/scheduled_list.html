@@ -1,0 +1,530 @@
+{% extends "base.html" %}
+{% block title %}Tâches planifiées — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="px-4 sm:px-8 pt-5 pb-3 flex items-center gap-3">
+      <button x-show="!sidebarOpen" @click="sidebarOpen = true" class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Afficher le panneau" aria-label="Afficher le panneau">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      {% if conversation %}
+      <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      {% else %}
+      <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      {% endif %}
+      <h1 class="text-[1.25rem] font-semibold">Tâches planifiées</h1>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-4 sm:px-8 pb-10 w-full">
+      <p class="text-[0.8125rem] text-[#6e6e6e] mb-4">
+        Ex. « Fais-moi un résumé des actualités tech tous les jours à 10h » dans le chat.
+        Chaque tâche écrit dans sa conversation dédiée. Le planificateur tourne quand JejeGPT est lancé ;
+        les échéances manquées (PC éteint) sont sautées. {{ max_failures }} échecs de suite désactivent la tâche.
+      </p>
+
+      {% if messages %}
+      <div class="mb-4 space-y-2">
+        {% for message in messages %}
+        <div class="p-3 rounded-xl border text-[0.8125rem] {% if message.tags == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-green-50 border-green-200 text-green-800{% endif %}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <h2 class="text-[0.9375rem] font-semibold mr-auto">Tâches ({{ tasks|length }}/{{ max_tasks }})</h2>
+        <input id="task-filter" type="search" placeholder="Filtrer…" aria-label="Filtrer les tâches" class="text-[0.8125rem] border border-[#e5e5e5] rounded-lg px-2.5 py-1.5 bg-white w-44">
+        <select id="task-sort" aria-label="Trier les tâches" class="text-[0.8125rem] border border-[#e5e5e5] rounded-lg px-2 py-1.5 bg-white">
+          <option value="next">Tri : prochain run</option>
+          <option value="name">Tri : nom</option>
+          <option value="status">Tri : statut</option>
+        </select>
+      </div>
+      <div id="task-list">
+      {% for task in tasks %}
+      <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4 mb-3 text-[0.8125rem] task-card" data-name="{{ task.name|lower|escape }}" data-prompt="{{ task.prompt|lower|escape }}" data-status="{% if task.enabled %}active{% else %}paused{% endif %}" data-next="{% if task.next_run %}{{ task.next_run|date:'YmdHi' }}{% else %}999999999999{% endif %}">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-semibold text-sm">{{ task.name }}</span>
+          {% if task.enabled %}
+          <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-[0.6875rem]">Active</span>
+          {% else %}
+          <span class="px-2 py-0.5 rounded-full bg-[#f4f4f4] text-[#6e6e6e] text-[0.6875rem]">En pause</span>
+          {% endif %}
+          <span class="text-[#424242]">{{ task.schedule_summary }}</span>
+          {% if task.next_run %}<span class="text-[#6e6e6e]">· prochain : {{ task.next_run|date:"d/m H:i" }}</span>{% endif %}
+          {% if task.conversation %}<a href="{% url 'chat:detail' task.conversation.pk %}" class="underline hover:text-ink">Conversation</a>{% endif %}
+        </div>
+        <div class="text-[#424242] mt-1 truncate" title="{{ task.prompt }}">{{ task.prompt }}</div>
+        {% if task.failures %}<div class="text-red-600 mt-1">Échecs consécutifs : {{ task.failures }}/{{ max_failures }}</div>{% endif %}
+        {% if task.last_failure %}
+        <div class="mt-1 text-xs text-red-600">
+          Dernier échec {{ task.last_failure.created_at|date:"d/m H:i" }} : {{ task.last_failure.error|default:"(sans détail)"|truncatechars:160 }}
+        </div>
+        {% endif %}
+        {% if task.last_run %}
+        <div class="mt-1 text-xs {% if task.last_run.success %}text-[#6e6e6e]{% else %}text-red-600{% endif %}">
+          Dernier run {{ task.last_run.created_at|date:"d/m H:i" }} : {% if task.last_run.success %}réussi{% else %}échec — {{ task.last_run.error }}{% endif %}
+        </div>
+        {% endif %}
+        {% if task.recent_runs %}
+        <details class="mt-1 text-xs text-[#424242]">
+          <summary class="cursor-pointer hover:text-ink">Historique ({{ task.recent_runs|length }} derniers runs)</summary>
+          <ul class="mt-1 space-y-0.5">
+            {% for run in task.recent_runs %}
+            <li>
+              {{ run.created_at|date:"d/m H:i" }} · {% if run.success %}<span class="text-green-700">réussi</span>{% else %}<span class="text-red-600">échec — {{ run.error|default:"(sans détail)"|truncatechars:100 }}</span>{% endif %}
+              {% if run.cause == "catchup" %}<span class="text-amber-700" title="Échéance manquée exécutée au redémarrage">🔁 rattrapage</span>{% endif %}
+              {% if run.cause == "manual" %}<span class="text-[#6e6e6e]">· manuel</span>{% endif %}
+              {% if run.cause == "draft" %}<span class="text-[#6e6e6e]">· brouillon</span>{% endif %}
+              {% if run.success and not run.has_changes %}<span class="text-[#6e6e6e]" title="Contenu identique au run précédent{% if task.last_excerpt %} : {{ task.last_excerpt|truncatechars:120 }}{% endif %}">· sans changement</span>{% endif %}
+              {% if run.message_id and task.conversation %}<a href="{% url 'chat:detail' task.conversation.pk %}#msg-{{ run.message_id }}" class="underline hover:text-ink">voir</a>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+        <div class="flex flex-wrap items-center gap-2 mt-2">
+          <form method="post" action="{% url 'chat:scheduled_toggle' task.pk %}" class="inline">
+            {% csrf_token %}
+            {% if task.enabled %}<button class="text-xs px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200">Mettre en pause</button>{% else %}<button class="text-xs px-3 py-1.5 rounded-lg bg-green-100 text-green-800 hover:bg-green-200">Activer</button>{% endif %}
+          </form>
+          <form method="post" action="{% url 'chat:scheduled_run_now' task.pk %}" class="inline">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200">Exécuter maintenant</button>
+          </form>
+          <form method="post" action="{% url 'chat:scheduled_draft' task.pk %}" class="inline" title="Un run unique d'essai : ne change ni la planification ni le compteur d'échecs">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-teal-100 text-teal-800 hover:bg-teal-200">Brouillon</button>
+          </form>
+          {% if task.last_failure %}
+          <form method="post" action="{% url 'chat:scheduled_run_now' task.pk %}" class="inline" title="Relancer après l'échec du {{ task.last_failure.created_at|date:'d/m H:i' }}">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 border border-blue-300 hover:bg-blue-200">Réessayer</button>
+          </form>
+          <form method="post" action="{% url 'chat:scheduled_reset_failures' task.pk %}" class="inline" title="Remettre le compteur d'échecs à zéro sans changer l'état">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] text-[#424242] border border-[#e5e5e5] hover:bg-[#e5e5e5]">Échecs à zéro</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{% url 'chat:scheduled_duplicate' task.pk %}" class="inline" title="Copier la tâche (nouvelle conversation, en pause)">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-purple-100 text-purple-800 hover:bg-purple-200">Dupliquer</button>
+          </form>
+          <form method="post" action="{% url 'chat:scheduled_delete' task.pk %}" class="inline" onsubmit="return confirm('Supprimer « {{ task.name|escapejs }} » ? La conversation dédiée sera aussi supprimée.')">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Supprimer…</button>
+          </form>
+          <button type="button" onclick="this.closest('.task-card').querySelector('.edit-form').classList.toggle('hidden')" class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] text-[#424242] border border-[#e5e5e5] hover:bg-[#e5e5e5]">Modifier…</button>
+        </div>
+        <div class="edit-form hidden">
+          <form method="post" action="{% url 'chat:scheduled_update' task.pk %}" class="mt-3 space-y-3 border-t border-[#e5e5e5] pt-3">
+            {% csrf_token %}
+            <label class="block">Nom<input name="name" maxlength="160" required value="{{ task.name }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Consigne<textarea name="prompt" rows="3" required class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">{{ task.prompt }}</textarea></label>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <label class="block">Fréquence
+                <select name="frequency" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">
+                  <option value="daily" {% if task.frequency == "daily" %}selected{% endif %}>Tous les jours</option>
+                  <option value="weekly" {% if task.frequency == "weekly" %}selected{% endif %}>Hebdomadaire</option>
+                  <option value="monthly" {% if task.frequency == "monthly" %}selected{% endif %}>Mensuel</option>
+                  <option value="once" {% if task.frequency == "once" %}selected{% endif %}>Une fois</option>
+                </select>
+              </label>
+              <label class="block">Heure<input name="time" type="time" value="{{ task.time_str }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+              <label class="block">Date unique<input name="once_at" type="datetime-local" value="{{ task.once_at_str }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            </div>
+            <label class="block">Jour du mois (mensuel, 1–28)<input name="month_day" type="number" min="1" max="28" value="{{ task.month_day|default:'' }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <fieldset class="block">
+              <legend class="text-[#424242]">Jours (hebdomadaire)</legend>
+              <div class="flex flex-wrap gap-2 mt-1">
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="0" {% if 0 in task.days_list %}checked{% endif %}>Lun</label>
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="1" {% if 1 in task.days_list %}checked{% endif %}>Mar</label>
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="2" {% if 2 in task.days_list %}checked{% endif %}>Mer</label>
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="3" {% if 3 in task.days_list %}checked{% endif %}>Jeu</label>
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="4" {% if 4 in task.days_list %}checked{% endif %}>Ven</label>
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="5" {% if 5 in task.days_list %}checked{% endif %}>Sam</label>
+                <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="6" {% if 6 in task.days_list %}checked{% endif %}>Dim</label>
+              </div>
+            </fieldset>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label class="block">Provider
+                <select name="provider" id="sched-provider-{{ task.pk }}" data-task="{{ task.pk }}" class="sched-provider-edit mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">
+                  {% for provider in providers %}
+                  <option value="{{ provider.pk }}" {% if provider.pk == task.provider_id %}selected{% endif %}>{{ provider.name }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="block">Modèle
+                <select id="sched-model-{{ task.pk }}" data-current="{{ task.model_id|escape }}" class="sched-model-edit mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></select>
+                <input id="sched-model-other-{{ task.pk }}" placeholder="model_id exact" value="{{ task.model_id }}" class="mt-2 w-full border border-[#e5e5e5] rounded-lg p-2 hidden">
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-4">
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="web_search" {% if task.web_search %}checked{% endif %}>Recherche web</label>
+              <label class="inline-flex items-center gap-1"><input type="checkbox" name="enabled" {% if task.enabled %}checked{% endif %}>Activée</label>
+              <label class="inline-flex items-center gap-1">Export auto
+                <select name="auto_export" class="border border-[#e5e5e5] rounded-lg p-1.5">
+                  <option value="" {% if not task.auto_export %}selected{% endif %}>Aucun</option>
+                  {% for fmt in export_formats %}
+                  <option value="{{ fmt }}" {% if task.auto_export == fmt %}selected{% endif %}>{{ fmt|upper }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Enregistrer</button>
+          </form>
+        </div>
+      </div>
+      {% empty %}
+      <p class="text-[0.8125rem] text-[#6e6e6e] mb-4">Aucune tâche. Demandez-la dans le chat ou créez-la ci-dessous.</p>
+      {% endfor %}
+      </div>
+      <p id="task-empty" class="hidden text-[0.8125rem] text-[#6e6e6e] mb-4">Aucune tâche ne correspond au filtre.</p>
+
+      <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Gabarits ({{ templates|length }})</h2>
+      <p class="text-[0.8125rem] text-[#6e6e6e] mb-2">Consignes à trous ({% templatetag openvariable %}sujet{% templatetag closevariable %}) : choisissez-en un dans « Nouvelle tâche », remplissez les variables, la consigne est générée.</p>
+      {% for tpl in templates %}
+      <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4 mb-3 text-[0.8125rem] tpl-card">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-semibold text-sm">{{ tpl.name }}</span>
+          {% for var in tpl.var_list %}<span class="px-2 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242] text-[0.6875rem]">{{ var }}</span>{% endfor %}
+          {% if tpl.suggest_web %}<span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[0.6875rem]">Recherche web conseillée</span>{% endif %}
+        </div>
+        {% if tpl.description %}<div class="text-[#424242] mt-1">{{ tpl.description }}</div>{% endif %}
+        <div class="flex flex-wrap items-center gap-2 mt-2">
+          <button type="button" onclick="this.closest('.tpl-card').querySelector('.tpl-edit-form').classList.toggle('hidden')" class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] text-[#424242] border border-[#e5e5e5] hover:bg-[#e5e5e5]">Modifier…</button>
+          <form method="post" action="{% url 'chat:template_delete' tpl.pk %}" class="inline" onsubmit="return confirm('Supprimer le gabarit « {{ tpl.name|escapejs }} » ?')">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Supprimer…</button>
+          </form>
+        </div>
+        <div class="tpl-edit-form hidden">
+          <form method="post" action="{% url 'chat:template_update' tpl.pk %}" class="mt-3 space-y-3 border-t border-[#e5e5e5] pt-3">
+            {% csrf_token %}
+            <label class="block">Nom<input name="name" maxlength="160" required value="{{ tpl.name }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Description<input name="description" maxlength="300" value="{{ tpl.description }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Consigne (variables <code>{% templatetag openvariable %}nom{% templatetag closevariable %}</code>)<textarea name="body" rows="6" required class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 font-mono text-xs">{{ tpl.body }}</textarea></label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="suggest_web" {% if tpl.suggest_web %}checked{% endif %}>Recherche web conseillée</label>
+            <div><button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Enregistrer</button></div>
+          </form>
+        </div>
+      </div>
+      {% empty %}
+      <p class="text-[0.8125rem] text-[#6e6e6e] mb-4">Aucun gabarit.</p>
+      {% endfor %}
+
+      <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Nouveau gabarit</h2>
+      <form method="post" action="{% url 'chat:template_create' %}" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 space-y-3 text-[0.8125rem]">
+        {% csrf_token %}
+        <label class="block">Nom<input name="name" maxlength="160" required placeholder="Ex. Recherche approfondie" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+        <label class="block">Description<input name="description" maxlength="300" placeholder="Ex. Veille documentaire structurée" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+        <label class="block">Consigne (variables <code>{% templatetag openvariable %}nom{% templatetag closevariable %}</code>, ex. <code>{% templatetag openvariable %}sujet{% templatetag closevariable %}</code>, <code>{% templatetag openvariable %}nombre{% templatetag closevariable %}</code>)<textarea name="body" rows="6" required placeholder="Effectue une recherche sur le sujet : les actualités…" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 font-mono text-xs"></textarea></label>
+        <label class="inline-flex items-center gap-1"><input type="checkbox" name="suggest_web">Recherche web conseillée</label>
+        <div><button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Créer le gabarit</button></div>
+      </form>
+
+      <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Nouvelle tâche</h2>
+      <div class="flex flex-wrap gap-2 mb-2 text-xs">
+        <span class="text-[#6e6e6e] py-1.5">Modèles :</span>
+        <button type="button" id="preset-actus" class="px-3 py-1.5 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">Actus IA quotidienne</button>
+        <button type="button" id="preset-veille" class="px-3 py-1.5 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">Veille hebdo</button>
+      </div>
+      <form method="post" action="{% url 'chat:scheduled_create' %}" id="sched-new-form" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 space-y-3 text-[0.8125rem]">
+        {% csrf_token %}
+        <div class="rounded-xl border border-dashed border-[#e5e5e5] p-3 space-y-2 bg-[#f9f9f9]">
+          <label class="block">Partir d'un gabarit
+            <select id="sched-tpl-select" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 bg-white">
+              <option value="">— Sans gabarit —</option>
+              {% for tpl in templates %}
+              <option value="{{ tpl.pk }}">{{ tpl.name }}{% if tpl.description %} — {{ tpl.description|truncatechars:60 }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div id="sched-tpl-vars" class="space-y-2"></div>
+          <div id="sched-tpl-preview-wrap" class="hidden">
+            <div class="text-[#424242] text-xs">Aperçu</div>
+            <pre id="sched-tpl-preview" class="whitespace-pre-wrap text-xs bg-white border border-[#e5e5e5] rounded-lg p-2 max-h-48 overflow-y-auto"></pre>
+            <button type="button" id="sched-tpl-use" class="mt-2 px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200 text-xs">Utiliser dans la consigne ↓</button>
+          </div>
+        </div>
+        <label class="block">Nom<input name="name" id="sched-new-name" maxlength="160" required class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+        <label class="block">Consigne<textarea name="prompt" id="sched-new-prompt" rows="3" required placeholder="Fais-moi un résumé des actualités tech" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></textarea></label>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <label class="block">Fréquence
+            <select name="frequency" id="sched-new-frequency" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">
+              <option value="daily">Tous les jours</option>
+              <option value="weekly">Hebdomadaire</option>
+              <option value="monthly">Mensuel</option>
+              <option value="once">Une fois</option>
+            </select>
+          </label>
+          <label class="block">Heure<input name="time" id="sched-new-time" type="time" value="10:00" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+          <label class="block">Date unique<input name="once_at" type="datetime-local" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+        </div>
+        <label class="block">Jour du mois (mensuel, 1–28)<input name="month_day" type="number" min="1" max="28" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+        <fieldset class="block">
+          <legend class="text-[#424242]">Jours (hebdomadaire)</legend>
+          <div class="flex flex-wrap gap-2 mt-1">
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="0">Lun</label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="1">Mar</label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="2">Mer</label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="3">Jeu</label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="4">Ven</label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="5">Sam</label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" name="days" value="6">Dim</label>
+          </div>
+        </fieldset>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block">Provider
+            <select name="provider" id="sched-provider" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">
+              {% for provider in providers %}
+              <option value="{{ provider.pk }}">{{ provider.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="block">Modèle
+            <select name="model_id" id="sched-model-select" required class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></select>
+            <input id="sched-model-other" placeholder="model_id exact" class="mt-2 w-full border border-[#e5e5e5] rounded-lg p-2 hidden">
+            <p id="sched-model-empty" class="hidden text-xs text-[#6e6e6e] mt-1">Aucun modèle en cache pour ce provider : actualisez-le dans Paramètres → Providers, ou saisissez l'identifiant ci-dessous.</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-4">
+          <label class="inline-flex items-center gap-1"><input type="checkbox" name="web_search" id="sched-new-web">Recherche web</label>
+          <label class="inline-flex items-center gap-1"><input type="checkbox" name="enabled" checked>Activer tout de suite</label>
+          <label class="inline-flex items-center gap-1">Export auto
+            <select name="auto_export" class="border border-[#e5e5e5] rounded-lg p-1.5">
+              <option value="">Aucun</option>
+              {% for fmt in export_formats %}
+              <option value="{{ fmt }}">{{ fmt|upper }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Créer la tâche</button>
+      </form>
+      {{ models_by_provider|json_script:"sched-models" }}
+      {{ templates_json|json_script:"sched-templates" }}
+      <script>
+      (function() {
+        var data = JSON.parse(document.getElementById('sched-models').textContent || '{}');
+        var prov = document.getElementById('sched-provider');
+        var sel = document.getElementById('sched-model-select');
+        var other = document.getElementById('sched-model-other');
+        var empty = document.getElementById('sched-model-empty');
+        function syncModels() {
+          var models = data[prov.value] || [];
+          sel.innerHTML = '';
+          models.forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.label;
+            sel.appendChild(opt);
+          });
+          var otherOpt = document.createElement('option');
+          otherOpt.value = '__other__';
+          otherOpt.textContent = models.length ? 'Autre (saisie libre)…' : 'Saisie libre…';
+          sel.appendChild(otherOpt);
+          if (!models.length) sel.value = '__other__';
+          syncOther();
+        }
+        function syncOther() {
+          var isOther = sel.value === '__other__';
+          other.classList.toggle('hidden', !isOther);
+          empty.classList.toggle('hidden', !isOther);
+          sel.name = isOther ? '' : 'model_id';
+          if (isOther) { other.name = 'model_id'; other.required = true; sel.required = false; }
+          else { other.removeAttribute('name'); other.required = false; sel.required = true; }
+        }
+        if (prov && sel) { prov.addEventListener('change', syncModels); sel.addEventListener('change', syncOther); syncModels(); }
+        // Formulaires d'édition : même logique, pré-sélection du modèle courant.
+        function syncEdit(taskPk) {
+          var p = document.getElementById('sched-provider-' + taskPk);
+          var s = document.getElementById('sched-model-' + taskPk);
+          var o = document.getElementById('sched-model-other-' + taskPk);
+          if (!p || !s || !o) return;
+          var current = s.getAttribute('data-current') || '';
+          var models = data[p.value] || [];
+          s.innerHTML = '';
+          var found = false;
+          models.forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.label;
+            if (m.id === current) { opt.selected = true; found = true; }
+            s.appendChild(opt);
+          });
+          var otherOpt = document.createElement('option');
+          otherOpt.value = '__other__';
+          otherOpt.textContent = models.length ? 'Autre (saisie libre)…' : 'Saisie libre…';
+          if (!found) otherOpt.selected = true;
+          s.appendChild(otherOpt);
+          syncEditOther(taskPk);
+        }
+        function syncEditOther(taskPk) {
+          var s = document.getElementById('sched-model-' + taskPk);
+          var o = document.getElementById('sched-model-other-' + taskPk);
+          if (!s || !o) return;
+          var isOther = s.value === '__other__';
+          o.classList.toggle('hidden', !isOther);
+          s.name = isOther ? '' : 'model_id';
+          if (isOther) { o.name = 'model_id'; o.required = true; s.required = false; }
+          else { o.removeAttribute('name'); o.required = false; s.required = true; }
+        }
+        document.querySelectorAll('.sched-provider-edit').forEach(function(p) {
+          var taskPk = p.getAttribute('data-task');
+          p.addEventListener('change', function() { syncEdit(taskPk); });
+          var s = document.getElementById('sched-model-' + taskPk);
+          if (s) s.addEventListener('change', function() { syncEditOther(taskPk); });
+          syncEdit(taskPk);
+        });
+        // Filtre texte + tri des cartes (100 % local, sans rechargement).
+        var list = document.getElementById('task-list');
+        var filterInput = document.getElementById('task-filter');
+        var sortSel = document.getElementById('task-sort');
+        var emptyMsg = document.getElementById('task-empty');
+        function applyTaskView() {
+          if (!list) return;
+          var q = (filterInput && filterInput.value || '').toLowerCase().trim();
+          var cards = Array.prototype.slice.call(list.querySelectorAll('.task-card'));
+          var visible = 0;
+          cards.forEach(function(c) {
+            var hay = ((c.getAttribute('data-name') || '') + ' ' + (c.getAttribute('data-prompt') || ''));
+            var show = !q || hay.toLowerCase().indexOf(q) !== -1;
+            c.style.display = show ? '' : 'none';
+            if (show) visible++;
+          });
+          if (emptyMsg) emptyMsg.classList.toggle('hidden', visible !== 0);
+          var mode = sortSel ? sortSel.value : 'next';
+          var shown = cards.filter(function(c) { return c.style.display !== 'none'; });
+          shown.sort(function(a, b) {
+            if (mode === 'name') {
+              return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '');
+            }
+            if (mode === 'status') {
+              var sa = a.getAttribute('data-status') || '', sb = b.getAttribute('data-status') || '';
+              if (sa !== sb) return sa < sb ? -1 : 1;
+              return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '');
+            }
+            var na = a.getAttribute('data-next') || '', nb = b.getAttribute('data-next') || '';
+            if (na !== nb) return na < nb ? -1 : 1;
+            return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '');
+          });
+          shown.forEach(function(c) { list.appendChild(c); });
+        }
+        if (filterInput) filterInput.addEventListener('input', applyTaskView);
+        if (sortSel) sortSel.addEventListener('change', applyTaskView);
+        // Modèles prédéfinis pour « Nouvelle tâche ».
+        function applyPreset(name, prompt, frequency, time, web) {
+          var n = document.getElementById('sched-new-name');
+          var pr = document.getElementById('sched-new-prompt');
+          var f = document.getElementById('sched-new-frequency');
+          var t = document.getElementById('sched-new-time');
+          var w = document.getElementById('sched-new-web');
+          if (n) n.value = name;
+          if (pr) pr.value = prompt;
+          if (f) f.value = frequency;
+          if (t && time) t.value = time;
+          if (w) w.checked = !!web;
+        }
+        var pActus = document.getElementById('preset-actus');
+        if (pActus) pActus.addEventListener('click', function() {
+          applyPreset('Actus IA', 'Fais-moi un résumé des actualités IA (nouveaux LLM, projets github, benchmarks) sous forme de liste avec titre, description, pourquoi c\u2019est intéressant et sources cliquables.', 'daily', '08:00', true);
+        });
+        var pVeille = document.getElementById('preset-veille');
+        if (pVeille) pVeille.addEventListener('click', function() {
+          applyPreset('Veille hebdo', 'Fais le point de la semaine sur mes sujets de veille : 5 points clés avec sources cliquables.', 'weekly', '09:00', true);
+        });
+        // Assistant gabarits : même regex {{nom}} que côté serveur (voir chat/models.py).
+        var tplData = JSON.parse(document.getElementById('sched-templates').textContent || '[]');
+        var tplById = {};
+        tplData.forEach(function(t) { tplById[String(t.id)] = t; });
+        var tplSel = document.getElementById('sched-tpl-select');
+        var tplVars = document.getElementById('sched-tpl-vars');
+        var tplPreviewWrap = document.getElementById('sched-tpl-preview-wrap');
+        var tplPreview = document.getElementById('sched-tpl-preview');
+        var tplUse = document.getElementById('sched-tpl-use');
+        var VAR_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+        function tplVarList(body) {
+          var seen = [], m;
+          VAR_RE.lastIndex = 0;
+          while ((m = VAR_RE.exec(body || '')) !== null) {
+            if (seen.indexOf(m[1]) === -1) seen.push(m[1]);
+          }
+          return seen;
+        }
+        function tplRender(body, values) {
+          return (body || '').replace(VAR_RE, function(match, name) {
+            return values[name] || match;
+          });
+        }
+        function tplRefresh() {
+          var t = tplById[tplSel.value];
+          if (!t) {
+            tplVars.innerHTML = '';
+            tplPreviewWrap.classList.add('hidden');
+            return;
+          }
+          var current = {};
+          tplVars.querySelectorAll('input[data-var]').forEach(function(inp) { current[inp.getAttribute('data-var')] = inp.value; });
+          var vars = (t.variables && t.variables.length) ? t.variables : tplVarList(t.body);
+          tplVars.innerHTML = '';
+          vars.forEach(function(name) {
+            var label = document.createElement('label');
+            label.className = 'block';
+            label.textContent = name;
+            var inp = document.createElement('input');
+            inp.setAttribute('data-var', name);
+            inp.placeholder = '{' + '{' + name + '}' + '}';
+            inp.className = 'mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 bg-white';
+            if (current[name]) inp.value = current[name];
+            inp.addEventListener('input', tplRefreshPreview);
+            label.appendChild(inp);
+            tplVars.appendChild(label);
+          });
+          tplRefreshPreview();
+        }
+        function tplRefreshPreview() {
+          var t = tplById[tplSel.value];
+          if (!t) return;
+          var values = {};
+          var missing = false;
+          tplVars.querySelectorAll('input[data-var]').forEach(function(inp) {
+            var v = (inp.value || '').trim();
+            values[inp.getAttribute('data-var')] = v;
+            if (!v) missing = true;
+          });
+          tplPreview.textContent = tplRender(t.body, values);
+          tplPreviewWrap.classList.remove('hidden');
+          tplUse.disabled = missing;
+          tplUse.classList.toggle('opacity-50', missing);
+          tplUse.textContent = missing ? 'Renseignez toutes les variables ↑' : 'Utiliser dans la consigne ↓';
+        }
+        if (tplSel) tplSel.addEventListener('change', tplRefresh);
+        if (tplUse) tplUse.addEventListener('click', function() {
+          var t = tplById[tplSel.value];
+          if (!t) return;
+          var values = {}, first = '';
+          tplVars.querySelectorAll('input[data-var]').forEach(function(inp) {
+            var v = (inp.value || '').trim();
+            if (!v) return;
+            values[inp.getAttribute('data-var')] = v;
+            if (!first) first = v;
+          });
+          var rendered = tplRender(t.body, values);
+          if (/\{\{\s*[A-Za-z0-9_]+\s*\}\}/.test(rendered)) return;
+          var pr = document.getElementById('sched-new-prompt');
+          if (pr) pr.value = rendered;
+          var n = document.getElementById('sched-new-name');
+          if (n && !n.value.trim()) n.value = (t.name + (first ? ' — ' + first : '')).slice(0, 160);
+          var w = document.getElementById('sched-new-web');
+          if (w && t.suggest_web) w.checked = true;
+          if (pr) pr.scrollIntoView({block: 'nearest'});
+        });
+      })();
+      </script>
+    </div>
+  </main>
+</div>
+{% endblock %}

@@ -1,0 +1,89 @@
+<h2 class="text-base font-semibold mb-1">Providers et modèles</h2>
+<p class="text-[0.8125rem] text-[#6e6e6e] mb-5">Endpoints OpenAI-compatibles (LM Studio, Ollama, vLLM, OpenRouter…). La clé API n'est jamais réaffichée : laissez le champ vide pour la conserver.</p>
+<p class="text-xs text-[#6e6e6e] mb-4 border border-[#e5e5e5] bg-white rounded-xl px-3 py-2">ℹ️ Zen et Go exposent 3 routes, toutes supportées : <code>chat/completions</code>, <code>/responses</code> (Muse Spark, GPT, Grok) et <code>/messages</code> (Claude, Qwen, MiniMax). La pastille de route est détectée via le cache + une table de secours (doc du 17/09/2026).</p>
+
+<div class="space-y-3">
+  {% for p in providers %}
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <div class="flex items-center gap-2">
+      <span class="font-semibold text-sm">{{ p.name }}</span>
+      {% if p.is_active %}
+      <span class="text-[0.625rem] px-2 py-0.5 rounded-full bg-green-100 text-green-700">Actif</span>
+      {% else %}
+      <span class="text-[0.625rem] px-2 py-0.5 rounded-full bg-[#f4f4f4] text-[#6e6e6e]">Inactif</span>
+      {% endif %}
+      <span class="ml-auto text-[0.6875rem] text-[#6e6e6e]">{{ p.cached_models.count }} modèle(s)</span>
+    </div>
+    <p class="text-xs text-[#6e6e6e] truncate mt-0.5">{{ p.base_url }} · clé {{ p.api_key|yesno:"configurée ●●●●,absente" }}</p>
+    {% if p.last_error %}<p class="text-xs text-red-600 mt-1">⚠️ {{ p.last_error }}</p>{% endif %}
+    {% if p.cached_models.all %}
+    <div class="flex flex-wrap gap-1.5 mt-2">
+      {% for m in p.cached_models.all %}
+      <span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-[#f4f4f4]" {% if m.route %}title="Route /{{ m.route }} supportée"{% endif %}>{{ m.model_id }}{% if m.route %} · /{{ m.route }}{% endif %}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <form method="post" action="{% url 'chat:model_add' p.pk %}" class="flex gap-1.5 mt-2">
+      {% csrf_token %}
+      <input name="model_id" placeholder="Ajouter un modèle manuellement (ex. glm-5.3-flash)" class="flex-1 text-xs border border-[#e5e5e5] rounded-lg p-1.5">
+      <button class="text-xs px-3 rounded-lg border border-[#e5e5e5] hover:bg-[#f4f4f4]">+</button>
+    </form>
+    {% if p.cached_models.all %}
+    <details class="mt-2 text-xs">
+      <summary class="cursor-pointer text-[#6e6e6e] hover:text-ink">Capacités des modèles (effort / web / réflexion)</summary>
+      {% for m in p.cached_models.all %}
+      <form method="post" action="{% url 'chat:model_caps' p.pk %}" class="flex items-center gap-2 mt-1.5 flex-wrap">
+        {% csrf_token %}
+        <input type="hidden" name="model_id" value="{{ m.model_id }}">
+        <span class="flex-1 min-w-[120px] truncate" title="{{ m.model_id }}">{{ m.model_id }}</span>
+        <label class="flex items-center gap-1"><input type="checkbox" name="supports_effort" value="1" {% if m.supports_effort %}checked{% endif %}> effort</label>
+        <label class="flex items-center gap-1"><input type="checkbox" name="supports_web" value="1" {% if m.supports_web %}checked{% endif %}> web</label>
+        <label class="flex items-center gap-1"><input type="checkbox" name="supports_thinking" value="1" {% if m.supports_thinking %}checked{% endif %}> réflexion</label>
+        <button class="px-2 py-0.5 rounded-lg border border-[#e5e5e5] hover:bg-[#f4f4f4]">OK</button>
+      </form>
+      {% endfor %}
+    </details>
+    {% endif %}
+    <div class="flex flex-wrap items-center gap-2 mt-3">
+      <form method="post" action="{% url 'chat:provider_refresh' p.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="providers">
+        <button class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">↻ Actualiser les modèles</button>
+      </form>
+      <form method="post" action="{% url 'chat:provider_update' p.pk %}" class="flex items-center gap-1.5 text-xs">
+        {% csrf_token %}
+        <input type="hidden" name="is_active" value="{% if p.is_active %}0{% else %}1{% endif %}">
+        <button class="px-3 py-1.5 rounded-lg border border-[#e5e5e5] hover:bg-[#f4f4f4]">{% if p.is_active %}Désactiver{% else %}Activer{% endif %}</button>
+      </form>
+      <form method="post" action="{% url 'chat:provider_delete' p.pk %}" onsubmit="return confirm('Supprimer {{ p.name }} et son cache de modèles ?')">
+        {% csrf_token %}
+        <button class="text-xs px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50">Supprimer</button>
+      </form>
+    </div>
+    <details class="mt-2 text-xs">
+      <summary class="cursor-pointer text-[#6e6e6e] hover:text-ink">Modifier l'URL / la clé</summary>
+      <form method="post" action="{% url 'chat:provider_update' p.pk %}" class="mt-2 space-y-1.5">
+        {% csrf_token %}
+        <input name="base_url" value="{{ p.base_url }}" class="w-full border border-[#e5e5e5] rounded-lg p-1.5" placeholder="https://…/v1">
+        <input name="api_key" type="password" value="" autocomplete="new-password" class="w-full border border-[#e5e5e5] rounded-lg p-1.5" placeholder="Nouvelle clé (vide = inchangée)">
+        <button class="px-3 py-1.5 rounded-lg bg-ink text-white">Enregistrer</button>
+      </form>
+    </details>
+  </div>
+  {% empty %}
+  <p class="text-[0.8125rem] text-[#6e6e6e]">Aucun provider configuré.</p>
+  {% endfor %}
+</div>
+
+<div class="bg-white border border-[#e5e5e5] rounded-2xl p-4 mt-4">
+  <h3 class="text-sm font-semibold mb-2">Ajouter un provider</h3>
+  <form method="post" action="{% url 'chat:provider_create' %}" class="space-y-2 text-[0.8125rem]">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="providers">
+    <input name="name" placeholder="Nom (ex. LM Studio)" class="w-full border border-[#e5e5e5] rounded-lg p-2" required>
+    <input name="base_url" placeholder="http://localhost:1234/v1" class="w-full border border-[#e5e5e5] rounded-lg p-2" required>
+    <input name="api_key" type="password" autocomplete="new-password" placeholder="Clé API (optionnel en local)" class="w-full border border-[#e5e5e5] rounded-lg p-2">
+    <button class="px-4 py-2 rounded-lg bg-ink text-white">Ajouter puis Actualiser →</button>
+  </form>
+  <p class="text-xs text-[#6e6e6e] mt-2">Après l'ajout, cliquez « Actualiser les modèles » pour lister les LLM via <code>GET /models</code>.</p>
+</div>

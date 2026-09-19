@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Paramètres — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="px-4 sm:px-8 pt-5 pb-3 flex items-center gap-3">
+      <button x-show="!sidebarOpen" @click="sidebarOpen = true" class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Afficher le panneau" aria-label="Afficher le panneau">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      {% if conversation %}
+      <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      {% else %}
+      <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      {% endif %}
+      <h1 class="text-[1.25rem] font-semibold">Paramètres</h1>
+    </div>
+
+    <div class="flex-1 flex flex-col md:flex-row min-h-0">
+      <!-- Onglets : rangée scrollable sur mobile, colonne sur desktop -->
+      <nav class="w-full md:w-60 shrink-0 flex md:flex-col flex-row gap-1 md:gap-0 md:space-y-[2px] overflow-x-auto md:overflow-x-visible md:overflow-y-auto overflow-y-hidden px-4 md:pb-6 pb-2 text-[0.8125rem]">
+        {% include "chat/partials/settings_tab_item.html" with slug="general" label="Général" icon="gear" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="notifications" label="Notifications" icon="bell" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="personnalisation" label="Personnalisation" icon="sliders" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="plugins" label="Plugins" icon="plug" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="voix" label="Voix" icon="mic" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="facturation" label="Facturation" icon="card" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="utilisation" label="Utilisation" icon="gauge" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="statistiques" label="Statistiques" icon="chart" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="providers" label="Providers et modèles" icon="server" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="donnees" label="Gestion des données" icon="db" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="navigateur" label="Navigateur cloud" icon="cloud" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="stockage" label="Stockage" icon="box" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="protection" label="Protection" icon="shield" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="securite" label="Sécurité et connexion" icon="lock" %}
+        {% include "chat/partials/settings_tab_item.html" with slug="parental" label="Contrôle parental" icon="users" %}
+      </nav>
+
+      <!-- Contenu -->
+      <section class="flex-1 overflow-y-auto px-4 sm:px-8 pb-10 w-full min-w-0">
+        {% if active_tab == "general" %}
+          {% include "chat/partials/settings_general.html" %}
+        {% elif active_tab == "personnalisation" %}
+          {% include "chat/partials/settings_perso.html" %}
+        {% elif active_tab == "providers" %}
+          {% include "chat/partials/settings_providers.html" %}
+        {% elif active_tab == "donnees" %}
+          {% include "chat/partials/settings_data.html" %}
+        {% elif active_tab == "utilisation" %}
+          {% include "chat/partials/settings_usage.html" %}
+        {% else %}
+          {% include "chat/partials/settings_soon.html" %}
+        {% endif %}
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}

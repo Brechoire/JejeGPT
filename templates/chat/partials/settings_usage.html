@@ -1,0 +1,140 @@
+<h2 class="text-base font-semibold mb-1">Utilisation</h2>
+<p class="text-[0.8125rem] text-[#6e6e6e] mb-4">Tokens et temps mesurés côté client à chaque réponse (les chiffres provider peuvent différer légèrement). Vitesse = tokens de sortie / durée.</p>
+
+<div class="flex items-center gap-1.5 text-xs mb-4">
+  <span class="text-[#6e6e6e]">Période :</span>
+  {% for p in usage_periods %}
+  <a href="{% url 'chat:settings_tab' tab='utilisation' %}?period={{ p }}"
+     class="px-2.5 py-1 rounded-lg {% if usage_period == p %}bg-ink text-white{% else %}border border-[#e5e5e5] hover:bg-white{% endif %}">{{ p }} j</a>
+  {% endfor %}
+</div>
+
+{% if usage_totals.calls %}
+<div class="grid grid-cols-2 xl:grid-cols-3 gap-2.5 mb-6">
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide">Appels</p>
+    <p class="text-[1.5rem] font-semibold">{{ usage_totals.calls }}</p>
+    <p class="text-xs text-[#6e6e6e]">{{ usage_totals.errors }} erreur(s)</p>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide">Tokens entrée</p>
+    <p class="text-[1.5rem] font-semibold">{{ usage_totals.prompt }}</p>
+    <p class="text-xs text-[#6e6e6e]">prompt + historique envoyés</p>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide">Tokens sortie</p>
+    <p class="text-[1.5rem] font-semibold">{{ usage_totals.completion }}</p>
+    <p class="text-xs text-[#6e6e6e]">générés ({{ usage_totals.total }} au total)</p>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide">Durée moyenne</p>
+    <p class="text-[1.5rem] font-semibold">{{ usage_totals.avg_ms }} ms</p>
+    <p class="text-xs text-[#6e6e6e]">aller-retour complet</p>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide">Vitesse moyenne</p>
+    <p class="text-[1.5rem] font-semibold">{{ usage_totals.tps }} tok/s</p>
+    <p class="text-xs text-[#6e6e6e]">sortie / durée</p>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide">Taux d'erreur</p>
+    <p class="text-[1.5rem] font-semibold">{% widthratio usage_totals.errors usage_totals.calls 100 %} %</p>
+    <p class="text-xs text-[#6e6e6e]">réponses en échec</p>
+  </div>
+</div>
+
+<h3 class="text-sm font-semibold mb-2">Activité ({{ usage_period }} derniers jours)</h3>
+<div class="bg-white border border-[#e5e5e5] rounded-2xl p-4 mb-6 overflow-x-auto">
+  <div class="flex gap-[3px] min-w-max">
+    {% for week in usage_heatmap %}
+    <div class="flex flex-col gap-[3px]">
+      {% for day in week %}
+      <div class="w-[11px] h-[11px] rounded-[3px] heat-l{{ day.level }}"
+           title="{{ day.date|date:'d M Y' }} — {{ day.calls }} appel(s)"></div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="flex items-center gap-1 mt-2 text-[0.6875rem] text-[#6e6e6e]">
+    <span>Moins</span>
+    <div class="w-[11px] h-[11px] rounded-[3px] heat-l0 border border-[#e5e5e5]"></div>
+    <div class="w-[11px] h-[11px] rounded-[3px] heat-l1"></div>
+    <div class="w-[11px] h-[11px] rounded-[3px] heat-l2"></div>
+    <div class="w-[11px] h-[11px] rounded-[3px] heat-l3"></div>
+    <div class="w-[11px] h-[11px] rounded-[3px] heat-l4"></div>
+    <span>Plus</span>
+  </div>
+</div>
+
+<h3 class="text-sm font-semibold mb-2">Par modèle</h3>
+<div class="bg-white border border-[#e5e5e5] rounded-2xl overflow-hidden mb-6 overflow-x-auto">
+  <table class="w-full text-[0.8125rem] min-w-[640px]">
+    <thead>
+      <tr class="text-left text-[0.6875rem] uppercase tracking-wide text-[#6e6e6e] border-b border-[#e5e5e5]">
+        <th class="px-4 py-2.5 font-medium">Modèle</th>
+        <th class="px-4 py-2.5 font-medium">Route</th>
+        <th class="px-4 py-2.5 font-medium text-right">Appels</th>
+        <th class="px-4 py-2.5 font-medium text-right">Entrée</th>
+        <th class="px-4 py-2.5 font-medium text-right">Sortie</th>
+        <th class="px-4 py-2.5 font-medium text-right">Total</th>
+        <th class="px-4 py-2.5 font-medium text-right">Ms moy.</th>
+        <th class="px-4 py-2.5 font-medium text-right">Tok/s</th>
+        <th class="px-4 py-2.5 font-medium text-right">Err.</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-[#e5e5e5]">
+      {% for row in usage_by_model %}
+      <tr>
+        <td class="px-4 py-2.5"><span class="font-medium">{{ row.model_id|default:"(sans modèle)" }}</span><br><span class="text-[0.6875rem] text-[#6e6e6e]">{{ row.provider__name|default:"" }}</span></td>
+        <td class="px-4 py-2.5 text-[#6e6e6e]">{% if row.route %}/{{ row.route }}{% else %}chat{% endif %}</td>
+        <td class="px-4 py-2.5 text-right">{{ row.calls }}</td>
+        <td class="px-4 py-2.5 text-right">{{ row.prompt }}</td>
+        <td class="px-4 py-2.5 text-right">{{ row.completion }}</td>
+        <td class="px-4 py-2.5 text-right font-medium">{{ row.total }}</td>
+        <td class="px-4 py-2.5 text-right">{{ row.avg_ms }}</td>
+        <td class="px-4 py-2.5 text-right">{{ row.tps }}</td>
+        <td class="px-4 py-2.5 text-right {% if row.errors %}text-red-600{% endif %}">{{ row.errors }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="px-4 py-3 text-[#6e6e6e]">Aucune donnée sur la période.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h3 class="text-sm font-semibold mb-2">20 dernières requêtes</h3>
+<div class="bg-white border border-[#e5e5e5] rounded-2xl overflow-hidden overflow-x-auto">
+  <table class="w-full text-[0.8125rem] min-w-[640px]">
+    <thead>
+      <tr class="text-left text-[0.6875rem] uppercase tracking-wide text-[#6e6e6e] border-b border-[#e5e5e5]">
+        <th class="px-4 py-2.5 font-medium">Heure</th>
+        <th class="px-4 py-2.5 font-medium">Conversation</th>
+        <th class="px-4 py-2.5 font-medium">Modèle</th>
+        <th class="px-4 py-2.5 font-medium text-right">In / Out</th>
+        <th class="px-4 py-2.5 font-medium text-right">Durée</th>
+        <th class="px-4 py-2.5 font-medium text-right">Tok/s</th>
+        <th class="px-4 py-2.5 font-medium">Statut</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-[#e5e5e5]">
+      {% for rec in usage_recent %}
+      <tr>
+        <td class="px-4 py-2.5 whitespace-nowrap">{{ rec.created_at|date:"d/m H:i" }}</td>
+        <td class="px-4 py-2.5"><a href="{% url 'chat:detail' rec.conversation_id %}" class="underline">{{ rec.conversation.title|truncatechars:30 }}</a></td>
+        <td class="px-4 py-2.5">{{ rec.model_id|truncatechars:28 }}</td>
+        <td class="px-4 py-2.5 text-right whitespace-nowrap">{{ rec.prompt_tokens }} / {{ rec.completion_tokens }}</td>
+        <td class="px-4 py-2.5 text-right">{{ rec.duration_ms }} ms</td>
+        <td class="px-4 py-2.5 text-right">{{ rec.tps }}</td>
+        <td class="px-4 py-2.5">{% if rec.success %}<span class="text-green-700">OK</span>{% else %}<span class="text-red-600" title="{{ rec.error }}">Erreur</span>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="px-4 py-3 text-[#6e6e6e]">Aucune donnée sur la période.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-white border border-[#e5e5e5] rounded-2xl p-6 text-[0.8125rem] text-[#6e6e6e]">
+  Aucune donnée pour l'instant — envoyez un message dans le chat, les tokens et durées apparaîtront ici.
+</div>
+{% endif %}
