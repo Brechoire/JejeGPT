@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
 import re
 import threading
 import time
 from datetime import datetime, timedelta
 from datetime import time as dtime
+from urllib.parse import urlparse
 
+import httpx
 from django.conf import settings
 from django.db import close_old_connections, transaction
 from django.utils import timezone
@@ -17,12 +20,60 @@ from .parse import PARIS
 
 logger = logging.getLogger(__name__)
 
+TRIGGER_MIN_SECONDS = 15 * 60
+TRIGGER_TIMEOUT = 15.0
+TRIGGER_MAX_BYTES = 200 * 1024
+
 # Consigne ajoutée au prompt des tâches avec recherche web : sources cliquables.
 SOURCES_SUFFIX = (
     "\n\nRéponds en Markdown. Termine par une ligne « Sources : » avec un lien "
     "Markdown cliquable [nom](https://…) par source réellement utilisée "
     "(vraies URL uniquement, aucune URL inventée)."
 )
+
+# Règle de liaison des entités nommées : un nom cité (chaîne YouTube, article,
+# outil, lieu…) s'écrit [Nom exact](https://URL officielle) avec une URL vue
+# pendant la recherche ; sans URL vue, nom en texte seul, jamais d'URL devinée.
+LINK_RULE = (
+    "Entités nommées cliquables : quand tu cites une entité nommée (chaîne YouTube, "
+    "article, outil, lieu…), écris-la en lien Markdown [Nom exact](https://URL officielle) "
+    "avec l'URL vue pendant la recherche ; si tu n'as vu aucune URL pour elle, laisse "
+    "le nom en texte seul — n'invente jamais d'URL."
+)
+
+_RE_DOMAIN = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*\.[a-z]{2,}$")
+
+
+def parse_sites(raw: str) -> tuple[list[str], str]:
+    """Valide des domaines (un par ligne). Retourne (propres, erreur)."""
+    cleaned: list[str] = []
+    for line in (raw or "").splitlines():
+        domain = line.strip().lower().rstrip(".")
+        if not domain:
+            continue
+        if domain.startswith(("http://", "https://", "www.")) or "/" in domain or ":" in domain:
+            return [], f"Ligne « {line.strip()[:60]} » : domaine nu attendu (sans https://, www ni chemin)."
+        if not _RE_DOMAIN.fullmatch(domain):
+            return [], f"Domaine invalide : « {line.strip()[:60]} »."
+        if domain not in cleaned:
+            cleaned.append(domain)
+    if len(cleaned) > 10:
+        return [], "Maximum 10 domaines."
+    return cleaned, ""
+
+
+def sites_suffix(sites_raw: str) -> str:
+    """Consigne de restriction aux domaines, '' si aucun."""
+    domains, _ = parse_sites(sites_raw)
+    if not domains:
+        return ""
+    joined = ", ".join(domains)
+    examples = ", ".join(f"site:{d}" for d in domains[:3])
+    return (
+        f"\n\nLimite tes sources à ces domaines : {joined}. "
+        f"Utilise les opérateurs de recherche (ex. {examples}) et privilégie "
+        "les liens directs vers ces sites."
+    )
 
 _started = False
 _thread: threading.Thread | None = None
@@ -91,6 +142,38 @@ def _reply_hash(text: str) -> str:
     return hashlib.sha256(_normalize_reply(text).encode("utf-8")).hexdigest()
 
 
+def trigger_url_allowed(url: str) -> bool:
+    """Garde-fou SSRF : http(s) public uniquement, jamais de réseau local."""
+    try:
+        parts = urlparse(url or "")
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host or host == "localhost":
+        return False
+    if host.endswith((".localhost", ".local", ".internal", ".lan")):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+    )
+
+
+def _fetch_trigger_text(url: str) -> str:
+    """Contenu texte d'une URL surveillée (borné). Lève en cas d'échec."""
+    with httpx.Client(timeout=TRIGGER_TIMEOUT, follow_redirects=True) as client:
+        resp = client.get(url, headers={"User-Agent": "JejeGPT/1.0 (+surveillance locale)"})
+        resp.raise_for_status()
+        raw = resp.content[:TRIGGER_MAX_BYTES]
+    return raw.decode("utf-8", errors="ignore")
+
+
 def _task_conversation(task):
     from ..models import Conversation
 
@@ -157,7 +240,7 @@ def _execute(task, now, cause: str = "due", catchup_from=None) -> None:
             task.provider, task.model_id,
             [
                 {"role": "system", "content": _scheduled_system(conv)},
-                {"role": "user", "content": task.prompt + (SOURCES_SUFFIX if task.web_search else "")},
+                {"role": "user", "content": task.prompt + (SOURCES_SUFFIX if task.web_search else "") + sites_suffix(task.sites or "")},
             ],
             temperature=task.temperature,
             timeout=settings.JEJEGPT_HTTP_TIMEOUT * 4,
@@ -236,7 +319,7 @@ def run_task_draft(pk: int) -> bool:
             task.provider, task.model_id,
             [
                 {"role": "system", "content": _scheduled_system(conv)},
-                {"role": "user", "content": task.prompt + (SOURCES_SUFFIX if task.web_search else "")},
+                {"role": "user", "content": task.prompt + (SOURCES_SUFFIX if task.web_search else "") + sites_suffix(task.sites or "")},
             ],
             temperature=task.temperature,
             timeout=settings.JEJEGPT_HTTP_TIMEOUT * 4,
@@ -337,12 +420,64 @@ def run_due_tasks(now=None, grace_seconds=None) -> int:
     return executed
 
 
+def check_triggers(now=None) -> int:
+    """Vérifie les URL surveillées (max 1 / 15 min / tâche). Retourne les déclenchements."""
+    from ..models import ScheduledTask
+
+    if now is None:
+        now = timezone.now()
+    fired = 0
+    for task in ScheduledTask.objects.filter(enabled=True).exclude(trigger_url=""):
+        try:
+            if task.last_check is not None and (now - task.last_check).total_seconds() < TRIGGER_MIN_SECONDS:
+                continue
+            if not trigger_url_allowed(task.trigger_url):
+                logger.warning("scheduled task %s trigger url refusée", task.pk)
+                task.last_check = now
+                task.save(update_fields=["last_check"])
+                continue
+            text = _normalize_reply(_fetch_trigger_text(task.trigger_url))
+            digest = _reply_hash(text)
+            keyword = (task.trigger_keyword or "").strip().lower()
+            if task.trigger_mode == "keyword" and not keyword:
+                task.last_check = now
+                task.last_trigger_hash = digest
+                task.save(update_fields=["last_check", "last_trigger_hash"])
+                continue
+            first = not task.last_trigger_hash
+            changed = digest != task.last_trigger_hash
+            task.last_check = now
+            task.last_trigger_hash = digest
+            task.save(update_fields=["last_check", "last_trigger_hash"])
+            if task.trigger_mode == "keyword":
+                hit = bool(keyword) and keyword in text
+                if hit and (first or changed) and run_task(task, now, force=True, cause="trigger"):
+                    fired += 1
+            elif changed and not first:
+                if run_task(task, now, force=True, cause="trigger"):
+                    fired += 1
+        except ScheduledTask.DoesNotExist:
+            continue
+        except Exception as exc:
+            logger.warning("scheduled task %s trigger fetch failed (%s)", task.pk, exc)
+            try:
+                task.failures += 1
+                if task.failures >= settings.JEJEGPT_SCHEDULER_MAX_FAILURES:
+                    task.enabled = False
+                task.last_check = now
+                task.save(update_fields=["failures", "enabled", "last_check"])
+            except Exception:
+                logger.exception("scheduled task %s trigger failure persist failed", task.pk)
+    return fired
+
+
 def _ticker_loop() -> None:
     tick = max(5, int(settings.JEJEGPT_SCHEDULER_TICK_SECONDS))
     while True:
         try:
             close_old_connections()
             run_due_tasks()
+            check_triggers()
         except Exception:
             logger.exception("scheduler tick failed")
         finally:

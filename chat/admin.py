@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     AppSettings,
+    Assistant,
     Conversation,
     Export,
     LLMModel,
@@ -34,8 +35,15 @@ class MessageInline(admin.TabularInline):
 
 @admin.register(Conversation)
 class ConversationAdmin(admin.ModelAdmin):
-    list_display = ("title", "provider", "model_id", "updated_at")
+    list_display = ("title", "provider", "model_id", "assistant", "updated_at")
+    list_filter = ("assistant",)
     inlines = [MessageInline]
+
+
+@admin.register(Assistant)
+class AssistantAdmin(admin.ModelAdmin):
+    list_display = ("name", "temperature", "web_search", "updated_at")
+    list_filter = ("web_search",)
 
 
 @admin.register(AppSettings)

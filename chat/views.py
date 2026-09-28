@@ -14,6 +14,7 @@ from . import providers
 from .md import render_markdown
 from .models import (
     AppSettings,
+    Assistant,
     Conversation,
     DeepResearchRun,
     Export,
@@ -78,22 +79,108 @@ def _last_usage_ctx(conv: Conversation) -> dict | None:
 
 
 def _messages_ctx(conv: Conversation) -> list[dict]:
-    return [
-        {
+    items = []
+    for m in conv.messages.prefetch_related("exports"):
+        exports = list(m.exports.all())
+        items.append({
             "obj": m,
             "html": render_markdown(m.content) if m.content else "",
-            "exports": list(m.exports.all()),
-        }
-        for m in conv.messages.prefetch_related("exports")
-    ]
+            "exports": exports,
+            **_newsletter_ctx(exports),
+        })
+    return items
+
+
+def _newsletter_ctx(exports: list) -> dict:
+    """Boutons par canal : la régénération a lieu au clic (aucune lecture de cache)."""
+    return {"newsletter_channels": True}
+
+
+def _newsletter_source(mid: int):
+    """Message source d'une newsletter : (message, conversation,httperror|None)."""
+    msg = get_object_or_404(Message, pk=mid)
+    conv = msg.conversation
+    if msg.role != "assistant" or not (msg.content or "").strip():
+        return msg, conv, "La newsletter se crée depuis une réponse."
+    if conv.provider is None or not conv.model_id:
+        return msg, conv, "Configurez un provider et un modèle pour générer la newsletter."
+    return msg, conv, None
+
+
+@require_POST
+def newsletter_channel(request: HttpRequest, mid: int, channel: str) -> HttpResponse:
+    """Régénère une synthèse adaptée au canal (mailto|html|eml), à chaque clic."""
+    from django.http import JsonResponse
+
+    from .exports.service import create_export
+    from .newsletter import (
+        URL_CHANNELS,
+        build_newsletter_for_channel,
+        mailto_href,
+        split_newsletter,
+    )
+
+    if channel not in URL_CHANNELS:
+        return HttpResponse("Canal newsletter inconnu.", status=404)
+    msg, conv, guard_error = _newsletter_source(mid)
+    wants_json = request.headers.get("HX-Request") == "true" or "application/json" in (
+        request.headers.get("Accept") or ""
+    )
+    if guard_error:
+        if wants_json:
+            return JsonResponse({"error": guard_error}, status=400)
+        django_messages.error(request, guard_error)
+        return redirect("chat:detail", pk=conv.pk)
+    try:
+        fresh = build_newsletter_for_channel(conv, msg.content or "", channel)
+    except providers.ProviderError as exc:
+        if wants_json:
+            return JsonResponse({"error": f"Newsletter impossible : {exc.message}"}, status=400)
+        django_messages.error(request, f"Newsletter impossible : {exc.message}")
+        return redirect("chat:detail", pk=conv.pk)
+    try:
+        if channel == "mailto":
+            subject, _md, text = split_newsletter(fresh)
+            href = mailto_href(subject, text)
+            if wants_json:
+                return JsonResponse({"mailto": href})
+            return redirect(href)
+        if channel == "html":
+            from .exports.html_gen import build_html
+
+            html_doc = build_html(f"Newsletter — {conv.title}", fresh).decode("utf-8")
+            msg.exports.filter(format="html").delete()
+            create_export(msg, "html", f"Newsletter — {conv.title}", fresh)
+            if wants_json:
+                return JsonResponse({"html": html_doc})
+            django_messages.success(request, "HTML riche régénéré (export mis à jour).")
+            return redirect("chat:detail", pk=conv.pk)
+        msg.exports.filter(format__in=("html", "eml")).delete()
+        create_export(msg, "html", f"Newsletter — {conv.title}", fresh)
+        eml_exp = create_export(msg, "eml", f"Newsletter — {conv.title}", fresh)
+        if wants_json:
+            return JsonResponse({"download": eml_exp.get_absolute_url()})
+        return redirect(eml_exp.get_absolute_url())
+    except (ValidationError, ValueError) as exc:
+        detail_msg = getattr(exc, "message", None) or str(exc)
+        if wants_json:
+            return JsonResponse({"error": f"Newsletter impossible : {detail_msg}"}, status=400)
+        django_messages.error(request, f"Newsletter impossible : {detail_msg}")
+        return redirect("chat:detail", pk=conv.pk)
 
 
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
-    conv = get_object_or_404(Conversation, pk=pk)
+    conv = get_object_or_404(Conversation.objects.select_related("assistant"), pk=pk)
     ScheduledRun.objects.filter(task__conversation=conv, seen=False).update(seen=True)
+    has_msgs = conv.messages.exists()
+    starters: list[str] = []
+    if not has_msgs and conv.assistant_id:
+        starters = conv.assistant.starter_list()
     ctx = {
         **_sidebar_ctx(conv),
-        "has_messages": conv.messages.exists(),
+        "has_messages": has_msgs,
+        "assistant_starters": starters,
+        "flash_messages": list(django_messages.get_messages(request)),
         "providers": Provider.objects.filter(is_active=True).prefetch_related("cached_models"),
         "messages": _messages_ctx(conv),
         "default_temperature": settings.JEJEGPT_DEFAULT_TEMPERATURE,
@@ -109,29 +196,41 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 def _sidebar_ctx(conversation: Conversation) -> dict:
     cutoff = timezone.now() - timedelta(days=30)
-    all_convs = Conversation.objects.all()
+    all_convs = Conversation.objects.select_related("project", "assistant").all()
     return {
         "conversations": all_convs,
         "recent_convs": all_convs.filter(updated_at__gte=cutoff),
         "older_convs": all_convs.filter(updated_at__lt=cutoff),
         "conversation": conversation,
+        "active_project_id": getattr(conversation, "project_id", None),
         "scheduled_unseen": ScheduledRun.objects.filter(seen=False).count(),
-        "projects": list(Project.objects.prefetch_related("conversations")),
+        "projects": list(
+            Project.objects.prefetch_related("conversations").annotate(
+                conv_count=models.Count("conversations")
+            )
+        ),
+        "assistants": list(
+            Assistant.objects.annotate(conv_count=models.Count("conversations")).all()
+        ),
     }
+
+
+def _resolve_default_llm() -> tuple[Provider | None, str]:
+    """Provider + modèle par défaut (réglage global, sinon 1er provider actif)."""
+    defaults = AppSettings.get_solo()
+    if defaults.default_valid():
+        return defaults.default_provider, defaults.default_model_id
+    first_provider = Provider.objects.filter(is_active=True).first()
+    first_model = ""
+    if first_provider:
+        m = first_provider.cached_models.first()
+        first_model = m.model_id if m else ""
+    return first_provider, first_model
 
 
 @require_POST
 def conversation_create(request: HttpRequest) -> HttpResponse:
-    defaults = AppSettings.get_solo()
-    if defaults.default_valid():
-        first_provider = defaults.default_provider
-        first_model = defaults.default_model_id
-    else:
-        first_provider = Provider.objects.filter(is_active=True).first()
-        first_model = ""
-        if first_provider:
-            m = first_provider.cached_models.first()
-            first_model = m.model_id if m else ""
+    first_provider, first_model = _resolve_default_llm()
     conv = Conversation.objects.create(
         title="Nouvelle conversation",
         provider=first_provider,
@@ -187,6 +286,8 @@ def conversation_update(request: HttpRequest, pk: int) -> HttpResponse:
         conv.reasoning_effort = effort if effort in providers.EFFORT_LEVELS else ""
     if "web_search" in request.POST:
         conv.web_search = request.POST.get("web_search") in ("1", "true", "on")
+    if "show_images" in request.POST:
+        conv.show_images = request.POST.get("show_images") in ("1", "true", "on")
     if "thinking_enabled" in request.POST:
         conv.thinking_enabled = request.POST.get("thinking_enabled") in ("1", "true", "on")
     if pid := request.POST.get("provider_id"):
@@ -207,18 +308,54 @@ def conversation_update(request: HttpRequest, pk: int) -> HttpResponse:
                 pass
     conv.save()
     if request.headers.get("HX-Request"):
-        return render(request, "chat/partials/thread.html", {
+        # Toggles du composer (postOpt) : renvoie les options à jour,
+        # la page ne recharge pas, seul le bloc est remplacé.
+        return render(request, "chat/partials/composer_options.html", {
             "conversation": conv,
-            "messages": _messages_ctx(conv),
+            "controls": providers.ui_controls(conv.provider, conv.model_id),
+            "effort_levels": providers.EFFORT_LEVELS,
         })
     return redirect("chat:detail", pk=conv.pk)
 
 
 def project_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    project = get_object_or_404(Project.objects.prefetch_related("conversations"), pk=pk)
+    from django.db.models import Count, Max, Prefetch
+
+    project = get_object_or_404(
+        Project.objects.prefetch_related(
+            Prefetch(
+                "conversations",
+                queryset=Conversation.objects.annotate(msg_count=Count("messages")),
+            )
+        ).annotate(
+            conv_count=Count("conversations", distinct=True),
+            msg_total=Count("conversations__messages", distinct=True),
+            last_activity=Max("conversations__updated_at"),
+        ),
+        pk=pk,
+    )
     conv = Conversation.objects.first()
-    ctx = _sidebar_ctx(conv) if conv is not None else {"recent_convs": [], "older_convs": []}
-    ctx.update({"conversation": conv, "project": project})
+    if conv is not None:
+        ctx = _sidebar_ctx(conv)
+    else:
+        ctx = {
+            "recent_convs": [],
+            "older_convs": [],
+            "active_project_id": None,
+            "projects": list(
+                Project.objects.prefetch_related("conversations").annotate(
+                    conv_count=models.Count("conversations")
+                )
+            ),
+            "assistants": list(
+                Assistant.objects.annotate(conv_count=models.Count("conversations"))
+            ),
+        }
+    ctx.update({
+        "conversation": conv,
+        "project": project,
+        "has_instructions": bool((project.instructions or "").strip()),
+    })
     return render(request, "chat/project_detail.html", ctx)
 
 
@@ -256,6 +393,160 @@ def project_delete(request: HttpRequest, pk: int) -> HttpResponse:
     project.delete()
     django_messages.success(request, f"Projet « {name} » supprimé (conversations conservées).")
     return redirect("chat:index")
+
+
+@require_POST
+def project_conversations_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    project = get_object_or_404(Project, pk=pk)
+    count = project.conversations.count()
+    if count:
+        project.conversations.all().delete()
+        django_messages.success(request, f"{count} conversation(s) du projet « {project.name} » supprimée(s).")
+    else:
+        django_messages.info(request, f"Aucune conversation à supprimer dans « {project.name} ».")
+    return redirect("chat:project_detail", pk=pk)
+
+
+def _parse_assistant_data(request: HttpRequest) -> dict | None:
+    """Valide un assistant : nom requis, température bornée, effort connu, 4 starters max."""
+    name = (request.POST.get("name") or "").strip()[:160]
+    if not name:
+        return None
+    try:
+        temperature = max(0.0, min(2.0, float(request.POST.get("temperature", "0.7") or 0.7)))
+    except (ValueError, TypeError):
+        temperature = 0.7
+    effort = (request.POST.get("reasoning_effort") or "").strip()
+    if effort not in providers.EFFORT_LEVELS:
+        effort = ""
+    return {
+        "name": name,
+        "description": (request.POST.get("description") or "").strip()[:300],
+        "instructions": (request.POST.get("instructions") or "").strip(),
+        "temperature": temperature,
+        "reasoning_effort": effort,
+        "web_search": request.POST.get("web_search") in ("1", "true", "on"),
+        "thinking_enabled": request.POST.get("thinking_enabled", "on") in ("1", "true", "on"),
+        "starters": Assistant.normalize_starters(request.POST.get("starters") or ""),
+    }
+
+
+def assistant_list(request: HttpRequest) -> HttpResponse:
+    conv = Conversation.objects.first()
+    ctx = _sidebar_ctx(conv) if conv is not None else {
+        "recent_convs": [], "older_convs": [], "active_project_id": None,
+        "projects": list(Project.objects.annotate(conv_count=models.Count("conversations"))),
+        "assistants": list(Assistant.objects.annotate(conv_count=models.Count("conversations"))),
+    }
+    ctx.update({
+        "conversation": conv,
+        "assistants_page": list(
+            Assistant.objects.annotate(conv_count=models.Count("conversations")).all()
+        ),
+        "sidebar_tab": "assistants",
+        "effort_levels": providers.EFFORT_LEVELS,
+    })
+    return render(request, "chat/assistant_list.html", ctx)
+
+
+def assistant_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    from django.db.models import Count
+
+    assistant = get_object_or_404(
+        Assistant.objects.annotate(conv_count=Count("conversations")), pk=pk
+    )
+    conv = Conversation.objects.first()
+    ctx = _sidebar_ctx(conv) if conv is not None else {
+        "recent_convs": [], "older_convs": [], "active_project_id": None,
+        "projects": list(Project.objects.annotate(conv_count=models.Count("conversations"))),
+        "assistants": list(Assistant.objects.annotate(conv_count=models.Count("conversations"))),
+    }
+    ctx.update({
+        "conversation": conv,
+        "assistant": assistant,
+        "sidebar_tab": "assistants",
+        "assistant_conversations": list(assistant.conversations.all()[:20]),
+        "effort_levels": providers.EFFORT_LEVELS,
+    })
+    return render(request, "chat/assistant_detail.html", ctx)
+
+
+@require_POST
+def assistant_create(request: HttpRequest) -> HttpResponse:
+    data = _parse_assistant_data(request)
+    if data is None:
+        django_messages.error(request, "Nom d'assistant requis.")
+        return redirect("chat:assistant_list")
+    if Assistant.objects.filter(name=data["name"]).exists():
+        django_messages.error(request, f"Un assistant « {data['name']} » existe déjà.")
+        return redirect("chat:assistant_list")
+    assistant = Assistant.objects.create(**data)
+    django_messages.success(request, f"Assistant « {assistant.name} » créé.")
+    return redirect("chat:assistant_detail", pk=assistant.pk)
+
+
+@require_POST
+def assistant_update(request: HttpRequest, pk: int) -> HttpResponse:
+    assistant = get_object_or_404(Assistant, pk=pk)
+    data = _parse_assistant_data(request)
+    if data is None:
+        django_messages.error(request, "Nom d'assistant requis.")
+        return redirect("chat:assistant_detail", pk=pk)
+    if Assistant.objects.exclude(pk=pk).filter(name=data["name"]).exists():
+        django_messages.error(request, f"Un assistant « {data['name']} » existe déjà.")
+        return redirect("chat:assistant_detail", pk=pk)
+    for field, value in data.items():
+        setattr(assistant, field, value)
+    assistant.save()
+    django_messages.success(request, f"Assistant « {assistant.name} » mis à jour.")
+    return redirect("chat:assistant_detail", pk=pk)
+
+
+@require_POST
+def assistant_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    assistant = get_object_or_404(Assistant, pk=pk)
+    name = assistant.name
+    assistant.delete()
+    django_messages.success(request, f"Assistant « {name} » supprimé (conversations conservées).")
+    return redirect("chat:assistant_list")
+
+
+@require_POST
+def assistant_duplicate(request: HttpRequest, pk: int) -> HttpResponse:
+    assistant = get_object_or_404(Assistant, pk=pk)
+    base = f"{assistant.name} (copie)"[:160]
+    name = base
+    suffix = 2
+    while Assistant.objects.filter(name=name).exists():
+        name = f"{base} {suffix}"[:160]
+        suffix += 1
+    copy = Assistant.objects.create(
+        name=name, description=assistant.description, instructions=assistant.instructions,
+        temperature=assistant.temperature, reasoning_effort=assistant.reasoning_effort,
+        web_search=assistant.web_search, thinking_enabled=assistant.thinking_enabled,
+        starters=assistant.starters,
+    )
+    django_messages.success(request, f"Assistant « {assistant.name} » dupliqué.")
+    return redirect("chat:assistant_detail", pk=copy.pk)
+
+
+@require_POST
+def assistant_start_conversation(request: HttpRequest, pk: int) -> HttpResponse:
+    """Démarre une conversation depuis un assistant (modèle par défaut)."""
+    assistant = get_object_or_404(Assistant, pk=pk)
+    provider, model_id = _resolve_default_llm()
+    conv = Conversation.objects.create(
+        title=assistant.name[:200],
+        provider=provider,
+        model_id=model_id,
+        temperature=assistant.temperature,
+        system_prompt=assistant.instructions or settings.JEJEGPT_DEFAULT_SYSTEM_PROMPT,
+        reasoning_effort=assistant.reasoning_effort,
+        web_search=assistant.web_search,
+        thinking_enabled=assistant.thinking_enabled,
+        assistant=assistant,
+    )
+    return redirect("chat:detail", pk=conv.pk)
 
 
 @require_POST
@@ -364,7 +655,19 @@ def settings_page(request: HttpRequest, tab: str = "general") -> HttpResponse:
         return redirect("chat:settings_tab", tab="general")
     conv = Conversation.objects.first()
     if conv is None:
-        ctx: dict = {"recent_convs": [], "older_convs": []}
+        ctx: dict = {
+            "recent_convs": [],
+            "older_convs": [],
+            "active_project_id": None,
+            "projects": list(
+                Project.objects.prefetch_related("conversations").annotate(
+                    conv_count=models.Count("conversations")
+                )
+            ),
+            "assistants": list(
+                Assistant.objects.annotate(conv_count=models.Count("conversations"))
+            ),
+        }
     else:
         ctx = _sidebar_ctx(conv)
     ctx.update({
@@ -405,7 +708,7 @@ USAGE_WEEKS = 22
 
 def _usage_ctx(request: HttpRequest) -> dict:
     from django.db.models import Avg, Count, Sum
-    from django.db.models.functions import TruncDate
+    from django.db.models.functions import ExtractHour, TruncDate
 
     try:
         period = int(request.GET.get("period", "30"))
@@ -465,6 +768,29 @@ def _usage_ctx(request: HttpRequest) -> dict:
         secs = (rec.duration_ms or 0) / 1000.0
         rec.tps = round(rec.completion_tokens / secs, 1) if secs > 0 else 0
 
+    per_day = [
+        {"date": day, "calls": days.get(str(day), 0)}
+        for day in (today - timedelta(days=i) for i in range(period - 1, -1, -1))
+    ]
+    peak_hours = list(
+        qs.annotate(hour=ExtractHour("created_at")).values("hour").annotate(
+            calls=Count("id")
+        ).order_by("-calls")[:3]
+    )
+    top_convs = list(
+        qs.values("conversation_id", "conversation__title").annotate(
+            total=Sum("total_tokens"), calls=Count("id")
+        ).order_by("-total")[:5]
+    )
+    feedback = Message.objects.filter(
+        created_at__gte=cutoff, role="assistant"
+    ).aggregate(
+        total=Count("id"),
+        up=Count("id", filter=models.Q(feedback="up")),
+        down=Count("id", filter=models.Q(feedback="down")),
+    )
+    feedback = {k: (v or 0) for k, v in feedback.items()}
+
     return {
         "usage_period": period,
         "usage_periods": USAGE_PERIODS,
@@ -472,6 +798,10 @@ def _usage_ctx(request: HttpRequest) -> dict:
         "usage_heatmap": heatmap,
         "usage_by_model": by_model,
         "usage_recent": recent,
+        "usage_per_day": per_day,
+        "usage_peak_hours": peak_hours,
+        "usage_top_convs": top_convs,
+        "usage_feedback": feedback,
     }
 
 
@@ -694,7 +1024,22 @@ def scheduled_list(request: HttpRequest) -> HttpResponse:
     from .scheduler.parse import describe_schedule
 
     conv = Conversation.objects.first()
-    ctx = _sidebar_ctx(conv) if conv is not None else {"recent_convs": [], "older_convs": []}
+    if conv is not None:
+        ctx = _sidebar_ctx(conv)
+    else:
+        ctx = {
+            "recent_convs": [],
+            "older_convs": [],
+            "active_project_id": None,
+            "projects": list(
+                Project.objects.prefetch_related("conversations").annotate(
+                    conv_count=models.Count("conversations")
+                )
+            ),
+            "assistants": list(
+                Assistant.objects.annotate(conv_count=models.Count("conversations"))
+            ),
+        }
     tasks = list(ScheduledTask.objects.select_related("conversation"))
     for task in tasks:
         days = [int(d) for d in (task.days or "").split(",") if d.strip().isdigit()]
@@ -771,6 +1116,14 @@ def scheduled_create(request: HttpRequest) -> HttpResponse:
     if TEMPLATE_VAR_RE.search(parsed["prompt"]):
         django_messages.error(request, "Il reste des variables {{…}} non renseignées dans la consigne.")
         return redirect("chat:scheduled_list")
+    trigger, trigger_error = _parse_trigger(request)
+    if trigger is None:
+        django_messages.error(request, trigger_error)
+        return redirect("chat:scheduled_list")
+    sites, sites_error = _parse_sites(request)
+    if sites is None:
+        django_messages.error(request, sites_error)
+        return redirect("chat:scheduled_list")
     task_conv = Conversation.objects.create(
         title=parsed["name"][:200], provider=provider, model_id=model_id,
         system_prompt=settings.JEJEGPT_DEFAULT_SYSTEM_PROMPT,
@@ -785,6 +1138,8 @@ def scheduled_create(request: HttpRequest) -> HttpResponse:
         web_search=bool(request.POST.get("web_search")), conversation=task_conv,
         enabled=bool(request.POST.get("enabled")),
         auto_export=_parse_auto_export(request),
+        trigger_url=trigger["trigger_url"], trigger_mode=trigger["trigger_mode"],
+        trigger_keyword=trigger["trigger_keyword"], sites=sites,
     )
     django_messages.success(request, f"Tâche « {parsed['name']} » créée.")
     return redirect("chat:scheduled_list")
@@ -822,6 +1177,14 @@ def scheduled_update(request: HttpRequest, pk: int) -> HttpResponse:
     if TEMPLATE_VAR_RE.search(parsed["prompt"]):
         django_messages.error(request, "Il reste des variables {{…}} non renseignées dans la consigne.")
         return redirect("chat:scheduled_list")
+    trigger, trigger_error = _parse_trigger(request)
+    if trigger is None:
+        django_messages.error(request, trigger_error)
+        return redirect("chat:scheduled_list")
+    sites, sites_error = _parse_sites(request)
+    if sites is None:
+        django_messages.error(request, sites_error)
+        return redirect("chat:scheduled_list")
     web_search = bool(request.POST.get("web_search"))
     enabled = bool(request.POST.get("enabled"))
     task.name = parsed["name"][:160]
@@ -836,6 +1199,10 @@ def scheduled_update(request: HttpRequest, pk: int) -> HttpResponse:
     task.web_search = web_search
     task.enabled = enabled
     task.auto_export = _parse_auto_export(request)
+    task.trigger_url = trigger["trigger_url"]
+    task.trigger_mode = trigger["trigger_mode"]
+    task.trigger_keyword = trigger["trigger_keyword"]
+    task.sites = sites
     task.next_run = compute_next_run(
         parsed["frequency"], parsed["days"], parsed["time"], parsed["once_at"],
         timezone.now(), month_day=parsed["month_day"],
@@ -846,7 +1213,7 @@ def scheduled_update(request: HttpRequest, pk: int) -> HttpResponse:
     task.save(update_fields=[
         "name", "prompt", "frequency", "days", "month_day", "time", "once_at",
         "provider", "model_id", "web_search", "enabled", "next_run", "failures",
-        "auto_export",
+        "auto_export", "trigger_url", "trigger_mode", "trigger_keyword", "sites",
     ])
     if task.conversation_id:
         conv = task.conversation
@@ -874,6 +1241,34 @@ def _parse_month_day(request: HttpRequest) -> int | None:
     except (ValueError, TypeError):
         return None
     return value if 1 <= value <= 28 else None
+
+
+def _parse_trigger(request: HttpRequest) -> tuple[dict | None, str]:
+    """Surveillance d'URL : (data, erreur). Data vide = désactivée."""
+    from .scheduler.engine import trigger_url_allowed
+
+    url = (request.POST.get("trigger_url") or "").strip()[:500]
+    if not url:
+        return {"trigger_url": "", "trigger_mode": "change", "trigger_keyword": ""}, ""
+    if not trigger_url_allowed(url):
+        return None, "URL de surveillance refusée (http(s) public uniquement, pas de réseau local)."
+    mode = (request.POST.get("trigger_mode") or "change").strip()
+    if mode not in ("change", "keyword"):
+        mode = "change"
+    keyword = (request.POST.get("trigger_keyword") or "").strip()[:200]
+    if mode == "keyword" and not keyword:
+        return None, "Mot-clé requis pour une surveillance par mot-clé."
+    return {"trigger_url": url, "trigger_mode": mode, "trigger_keyword": keyword}, ""
+
+
+def _parse_sites(request: HttpRequest) -> tuple[str | None, str]:
+    """Domaines restreints (un par ligne) : (texte propre, erreur)."""
+    from .scheduler.engine import parse_sites
+
+    domains, error = parse_sites(request.POST.get("sites") or "")
+    if error:
+        return None, error
+    return "\n".join(domains), ""
 
 
 def scheduled_badge(request: HttpRequest) -> JsonResponse:
@@ -954,6 +1349,8 @@ def scheduled_duplicate(request: HttpRequest, pk: int) -> HttpResponse:
         time=task.time, once_at=task.once_at, provider=task.provider,
         model_id=task.model_id, temperature=task.temperature,
         web_search=task.web_search, auto_export=task.auto_export,
+        trigger_url=task.trigger_url, trigger_mode=task.trigger_mode,
+        trigger_keyword=task.trigger_keyword, sites=task.sites,
         conversation=task_conv, enabled=False, failures=0,
     )
     copy.next_run = compute_next_run(
@@ -994,6 +1391,43 @@ def export_create(request: HttpRequest, mid: int, fmt: str) -> HttpResponse:
     return redirect(export.get_absolute_url())
 
 
+@require_POST
+def newsletter_create(request: HttpRequest, mid: int) -> HttpResponse:
+    """Génère une synthèse newsletter d'une réponse, sans toucher au fil.
+
+    Renouvelle les exports html + eml liés au message source puis redirige
+    vers la conversation (cartes de téléchargement + actions mailto/copie).
+    """
+    from .exports.service import create_export
+    from .newsletter import build_newsletter_text
+
+    message = get_object_or_404(Message, pk=mid)
+    conv = message.conversation
+    if message.role != "assistant" or not (message.content or "").strip():
+        django_messages.error(request, "La newsletter se crée depuis une réponse.")
+        return redirect("chat:detail", pk=conv.pk)
+    if conv.provider is None or not conv.model_id:
+        django_messages.error(
+            request, "Configurez un provider et un modèle pour générer la newsletter."
+        )
+        return redirect("chat:detail", pk=conv.pk)
+    try:
+        newsletter_md = build_newsletter_text(conv, message.content or "")
+    except providers.ProviderError as exc:
+        django_messages.error(request, f"Newsletter impossible : {exc.message}")
+        return redirect("chat:detail", pk=conv.pk)
+    try:
+        message.exports.filter(format__in=("html", "eml")).delete()
+        create_export(message, "html", f"Newsletter — {conv.title}", newsletter_md)
+        create_export(message, "eml", f"Newsletter — {conv.title}", newsletter_md)
+    except (ValidationError, ValueError) as exc:
+        detail_msg = getattr(exc, "message", None) or str(exc)
+        django_messages.error(request, f"Newsletter impossible : {detail_msg}")
+        return redirect("chat:detail", pk=conv.pk)
+    django_messages.success(request, "Newsletter prête : Outlook (mailto), Copier HTML ou .eml ci-dessous.")
+    return redirect("chat:detail", pk=conv.pk)
+
+
 def _generate_reply(conv: Conversation) -> tuple[bool, str]:
     """Appelle le provider, persiste la réponse (ou l'erreur inline).
 
@@ -1019,6 +1453,7 @@ def _generate_reply(conv: Conversation) -> tuple[bool, str]:
     _record_usage(conv, usage, success=True)
     last_user = conv.messages.filter(role="user").order_by("-created_at", "-id").first()
     _maybe_extract_memory(conv, last_user.content if last_user else "", reply)
+    _maybe_auto_images(conv, last_user.content if last_user else "")
     return True, ""
 
 
@@ -1053,6 +1488,44 @@ def _maybe_auto_export(conv: Conversation, user_text: str) -> None:
         create_export(assistant, fmt, conv.title, assistant.content)
     except Exception:
         logger.exception("auto export failed")
+
+
+def _maybe_auto_images(conv: Conversation, user_text: str) -> None:
+    """Enrichit la dernière réponse avec une galerie web si pertinent.
+
+    Déclenché si le toggle Images est ON et que le sujet s'y prête
+    (ex. ruines sous-marines No Man's Sky). Silencieux en échec :
+    la réponse texte reste toujours livrée.
+    """
+    from .image_search import images_enabled, images_markdown, needs_images, search_images
+
+    try:
+        if not getattr(conv, "show_images", True):
+            logger.info("auto images skip: toggle off (conv=%s)", conv.pk)
+            return
+        if not images_enabled():
+            logger.info("auto images skip: recherche désactivée (provider/auto)")
+            return
+        if not needs_images(user_text):
+            logger.info("auto images skip: sujet non-visuel")
+            return
+        assistant = conv.messages.filter(role="assistant").exclude(content="").last()
+        if assistant is None or not assistant.content:
+            logger.info("auto images skip: pas de réponse à enrichir")
+            return
+        if "🖼️ **Images**" in assistant.content:
+            logger.info("auto images skip: galerie déjà présente")
+            return
+        results = search_images(user_text)
+        block = images_markdown(results)
+        if not block:
+            logger.warning("auto images: 0 résultat pour %r", (user_text or "")[:80])
+            return
+        assistant.content = assistant.content.rstrip() + "\n" + block + "\n"
+        assistant.save(update_fields=["content"])
+        logger.info("auto images: galerie %d image(s) ajoutée (conv=%s)", len(results), conv.pk)
+    except Exception:
+        logger.exception("auto images failed")
 
 
 def _maybe_schedule(conv: Conversation, user_text: str) -> None:
@@ -1124,7 +1597,8 @@ def _maybe_schedule(conv: Conversation, user_text: str) -> None:
 
 def _create_scheduled_task(name, prompt, frequency, days, time_str, once_at, provider,
                            model_id, temperature, web_search, conversation, enabled,
-                           auto_export="", month_day=None):
+                           auto_export="", month_day=None, trigger_url="",
+                           trigger_mode="change", trigger_keyword="", sites=""):
     from .scheduler.engine import compute_next_run, dtime_from_str
 
     time_value = dtime_from_str(time_str) if time_str else None
@@ -1135,6 +1609,8 @@ def _create_scheduled_task(name, prompt, frequency, days, time_str, once_at, pro
         time=time_value, once_at=once_at, provider=provider, model_id=model_id,
         temperature=temperature, web_search=web_search, conversation=conversation,
         enabled=enabled, auto_export=auto_export,
+        trigger_url=trigger_url, trigger_mode=trigger_mode,
+        trigger_keyword=trigger_keyword, sites=sites,
     )
     task.next_run = compute_next_run(
         frequency, days or [], time_str, once_at, timezone.now(), month_day=month_day
@@ -1186,14 +1662,33 @@ def message_edit(request: HttpRequest, mid: int) -> HttpResponse:
     return render(request, "chat/partials/thread.html", _thread_ctx(conv))
 
 
+def _regen_anchor(msg: Message) -> Message | None:
+    """Question d'ancrage pour régénérer : le message lui-même si c'est une
+    question, sinon la question précédente (clic sous une réponse)."""
+    if msg.role == "user":
+        return msg
+    ordered = list(msg.conversation.messages.order_by("created_at", "id"))
+    ids = [m.id for m in ordered]
+    try:
+        idx = ids.index(msg.id)
+    except ValueError:
+        return None
+    for m in reversed(ordered[:idx]):
+        if m.role == "user":
+            return m
+    return None
+
+
 @require_POST
 def message_regenerate_from(request: HttpRequest, mid: int) -> HttpResponse:
-    """Régénère la réponse à partir d'une question (supprime la suite)."""
+    """Régénère la réponse à partir d'une question ou d'une réponse
+    (ancre = la question correspondante, suite supprimée)."""
     msg = get_object_or_404(Message, pk=mid)
-    if msg.role != "user":
-        return HttpResponse("Seule une réponse à une question peut être régénérée.", status=400)
+    anchor = _regen_anchor(msg)
+    if anchor is None:
+        return HttpResponse("Aucune question à régénérer.", status=400)
     conv = msg.conversation
-    _delete_following(conv, msg)
+    _delete_following(conv, anchor)
     _generate_reply(conv)
     return render(request, "chat/partials/thread.html", _thread_ctx(conv))
 
@@ -1223,7 +1718,7 @@ def message_send(request: HttpRequest, pk: int) -> HttpResponse:
         _maybe_schedule(conv, content)
         if conv.title == "Nouvelle conversation":
             conv.title = content[:60]
-        conv.save()
+    conv.save()
     if request.headers.get("HX-Request"):
         return render(request, "chat/partials/thread.html", {
             "conversation": conv,
@@ -1300,6 +1795,7 @@ def message_stream(request: HttpRequest, pk: int) -> StreamingHttpResponse:
             user_text = prompt or (last_user.content if last_user else "")
             _maybe_auto_export(conv, user_text)
             _maybe_schedule(conv, user_text)
+            _maybe_auto_images(conv, user_text)
             _maybe_extract_memory(conv, user_text, "".join(full))
             if conv.title == "Nouvelle conversation" and prompt:
                 conv.title = prompt[:60]

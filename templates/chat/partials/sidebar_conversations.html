@@ -1,14 +1,18 @@
 {% if recent_convs %}
+<div data-filter-section="recent">
 <p class="px-2 pt-1 pb-1 text-[0.6875rem] text-[#6e6e6e]">30 derniers jours</p>
 {% for c in recent_convs %}
 {% include "chat/partials/sidebar_item.html" with c=c %}
 {% endfor %}
+</div>
 {% endif %}
 {% if older_convs %}
+<div data-filter-section="older">
 <p class="px-2 pt-3 pb-1 text-[0.6875rem] text-[#6e6e6e]">Plus ancien</p>
 {% for c in older_convs %}
 {% include "chat/partials/sidebar_item.html" with c=c %}
 {% endfor %}
+</div>
 {% endif %}
 {% if not recent_convs and not older_convs %}
 <p class="text-[0.8125rem] text-[#6e6e6e] p-2">Aucune conversation.</p>

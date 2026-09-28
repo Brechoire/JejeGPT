@@ -7,7 +7,20 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
-from .document import Block, BulletList, CodeBlock, Heading, Paragraph, Table, parse_markdown, sanitize_cell
+from .document import (
+    Block,
+    BulletList,
+    CodeBlock,
+    Heading,
+    HorizontalRule,
+    OrderedList,
+    Paragraph,
+    Quote,
+    Table,
+    parse_markdown,
+    sanitize_cell,
+    strip_inline,
+)
 
 _TITLE_FONT = Font(bold=True, size=14)
 _HEADING_FONT = Font(bold=True, size=12)
@@ -26,14 +39,14 @@ def _is_number(text: str) -> bool:
 def _write_table(ws, table: Table, start_row: int = 1) -> int:
     row = start_row
     for ci, header in enumerate(table.headers, start=1):
-        cell = ws.cell(row=row, column=ci, value=sanitize_cell(header))
+        cell = ws.cell(row=row, column=ci, value=sanitize_cell(strip_inline(header)))
         cell.font = _HEADER_FONT
         cell.alignment = _WRAP
     row += 1
     numeric_cols = [all(_is_number(r[ci]) for r in table.rows if ci < len(r)) for ci in range(len(table.headers))]
     for values in table.rows:
         for ci in range(len(table.headers)):
-            raw = values[ci] if ci < len(values) else ""
+            raw = strip_inline(values[ci] if ci < len(values) else "")
             text = sanitize_cell(raw)
             if _is_number(raw):
                 try:
@@ -66,20 +79,30 @@ def build_xlsx(title: str, markdown_text: str) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Contenu"
-    ws["A1"] = title.strip() or "Export JejeGPT"
+    ws["A1"] = strip_inline(title.strip()) or "Export JejeGPT"
     ws["A1"].font = _TITLE_FONT
     row = 3
     table_count = 0
     for block in blocks:
         if isinstance(block, Heading):
-            ws.cell(row=row, column=1, value=block.text).font = _HEADING_FONT
+            ws.cell(row=row, column=1, value=strip_inline(block.text)).font = _HEADING_FONT
             row += 1
         elif isinstance(block, Paragraph):
-            ws.cell(row=row, column=1, value=block.text).alignment = _WRAP
+            ws.cell(row=row, column=1, value=strip_inline(block.text)).alignment = _WRAP
+            row += 1
+        elif isinstance(block, Quote):
+            ws.cell(row=row, column=1, value="« " + strip_inline(block.text) + " »").alignment = _WRAP
+            row += 1
+        elif isinstance(block, HorizontalRule):
+            ws.cell(row=row, column=1, value="———").alignment = _WRAP
             row += 1
         elif isinstance(block, BulletList):
             for item in block.items:
-                ws.cell(row=row, column=1, value="• " + sanitize_cell(item)).alignment = _WRAP
+                ws.cell(row=row, column=1, value="• " + sanitize_cell(strip_inline(item))).alignment = _WRAP
+                row += 1
+        elif isinstance(block, OrderedList):
+            for n, item in enumerate(block.items, start=1):
+                ws.cell(row=row, column=1, value=f"{n}. " + sanitize_cell(strip_inline(item))).alignment = _WRAP
                 row += 1
         elif isinstance(block, Table):
             table_count += 1

@@ -55,6 +55,8 @@
           <span class="text-[#424242]">{{ task.schedule_summary }}</span>
           {% if task.next_run %}<span class="text-[#6e6e6e]">· prochain : {{ task.next_run|date:"d/m H:i" }}</span>{% endif %}
           {% if task.conversation %}<a href="{% url 'chat:detail' task.conversation.pk %}" class="underline hover:text-ink">Conversation</a>{% endif %}
+          {% if task.trigger_url %}<span class="text-purple-700" title="Surveille {{ task.trigger_url }} ({% if task.trigger_mode == 'keyword' %}mot-clé « {{ task.trigger_keyword }} »{% else %}tout changement{% endif %})">👁 surveillance</span>{% endif %}
+          {% if task.sites %}<span class="text-[#6e6e6e]" title="Sources restreintes : {{ task.sites }}">🌐 sites restreints</span>{% endif %}
         </div>
         <div class="text-[#424242] mt-1 truncate" title="{{ task.prompt }}">{{ task.prompt }}</div>
         {% if task.failures %}<div class="text-red-600 mt-1">Échecs consécutifs : {{ task.failures }}/{{ max_failures }}</div>{% endif %}
@@ -78,6 +80,7 @@
               {% if run.cause == "catchup" %}<span class="text-amber-700" title="Échéance manquée exécutée au redémarrage">🔁 rattrapage</span>{% endif %}
               {% if run.cause == "manual" %}<span class="text-[#6e6e6e]">· manuel</span>{% endif %}
               {% if run.cause == "draft" %}<span class="text-[#6e6e6e]">· brouillon</span>{% endif %}
+              {% if run.cause == "trigger" %}<span class="text-purple-700" title="{{ task.trigger_url }}">⚡ déclenchement</span>{% endif %}
               {% if run.success and not run.has_changes %}<span class="text-[#6e6e6e]" title="Contenu identique au run précédent{% if task.last_excerpt %} : {{ task.last_excerpt|truncatechars:120 }}{% endif %}">· sans changement</span>{% endif %}
               {% if run.message_id and task.conversation %}<a href="{% url 'chat:detail' task.conversation.pk %}#msg-{{ run.message_id }}" class="underline hover:text-ink">voir</a>{% endif %}
             </li>
@@ -173,6 +176,22 @@
                 </select>
               </label>
             </div>
+            <label class="block">Sites restreints (un domaine par ligne, optionnel)
+              <textarea name="sites" rows="2" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 font-mono text-xs">{{ task.sites }}</textarea>
+            </label>
+            <fieldset class="block rounded-xl border border-dashed border-[#e5e5e5] p-3">
+              <legend class="text-[#424242] px-1">Surveillance (vérifiée toutes les 15 min)</legend>
+              <label class="block">URL surveillée<input name="trigger_url" type="url" maxlength="500" value="{{ task.trigger_url }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+              <div class="flex flex-wrap gap-3 mt-2">
+                <label class="inline-flex items-center gap-1">Mode
+                  <select name="trigger_mode" class="border border-[#e5e5e5] rounded-lg p-1.5">
+                    <option value="change" {% if task.trigger_mode == "change" %}selected{% endif %}>Changement</option>
+                    <option value="keyword" {% if task.trigger_mode == "keyword" %}selected{% endif %}>Mot-clé</option>
+                  </select>
+                </label>
+                <label class="inline-flex items-center gap-1 flex-1 min-w-40">Mot-clé<input name="trigger_keyword" maxlength="200" value="{{ task.trigger_keyword }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-1.5"></label>
+              </div>
+            </fieldset>
             <button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Enregistrer</button>
           </form>
         </div>
@@ -302,6 +321,22 @@
             </select>
           </label>
         </div>
+        <label class="block">Sites restreints (un domaine par ligne, optionnel)
+          <textarea name="sites" rows="2" placeholder="exemple.fr&#10;lemonde.fr" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 font-mono text-xs"></textarea>
+        </label>
+        <fieldset class="block rounded-xl border border-dashed border-[#e5e5e5] p-3">
+          <legend class="text-[#424242] px-1">Surveillance (optionnel, vérifiée toutes les 15 min, pas instantané)</legend>
+          <label class="block">URL surveillée<input name="trigger_url" type="url" maxlength="500" placeholder="https://…" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+          <div class="flex flex-wrap gap-3 mt-2">
+            <label class="inline-flex items-center gap-1">Mode
+              <select name="trigger_mode" class="border border-[#e5e5e5] rounded-lg p-1.5">
+                <option value="change">Changement</option>
+                <option value="keyword">Mot-clé</option>
+              </select>
+            </label>
+            <label class="inline-flex items-center gap-1 flex-1 min-w-40">Mot-clé<input name="trigger_keyword" maxlength="200" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-1.5"></label>
+          </div>
+        </fieldset>
         <button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Créer la tâche</button>
       </form>
       {{ models_by_provider|json_script:"sched-models" }}

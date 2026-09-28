@@ -141,3 +141,73 @@ def test_banniere_progression_si_run_actif():
     html = Client().get(f"/{conv.pk}/").content.decode()
     assert 'id="research-banner"' in html
     assert f"/recherche/{run.pk}/statut/" in html
+
+
+def test_synthese_exige_tableau_entite_lien():
+    from chat.research import SYNTHESIS_SYSTEM
+
+    assert "| Entité | Détail | Lien |" in SYNTHESIS_SYSTEM
+    assert "noms nus sont interdits" in SYNTHESIS_SYSTEM
+
+
+def test_synthese_recoit_section_urls_vues(monkeypatch):
+    from chat import providers as _pv
+    from chat.research import _run_research
+
+    seen = {}
+    findings = (
+        "Piste : [Ashker NMS](https://youtube.com/@ashkernms) fait des lives. "
+        "Voir https://nms-france.fr/."
+    )
+
+    def fake_complete(provider, model_id, messages, **kwargs):
+        seen.setdefault("calls", []).append(messages)
+        if len(seen["calls"]) < 4:
+            return findings
+        return "## Synthèse\n\nAshker NMS fait des lives."
+
+    monkeypatch.setattr(_pv, "chat_complete", fake_complete)
+    provider = _provider()
+    source = _conversation(provider)
+    conv = _conversation(provider)
+    run = DeepResearchRun.objects.create(subject="S", source=source, max_cycles=3)
+    run.conversation = conv
+    run.save()
+    assert _run_research(run.pk) is True
+    user_msg = seen["calls"][-1][1]["content"]
+    assert "URLs vues (réutilise uniquement celles-ci" in user_msg
+    assert "https://youtube.com/@ashkernms" in user_msg
+    assert "https://nms-france.fr/" in user_msg
+    final = Message.objects.filter(conversation=conv, role="assistant").first()
+    assert final is not None
+    # Injection déterministe : le nom nu de la synthèse est relié.
+    assert "[Ashker NMS](https://youtube.com/@ashkernms)" in final.content
+    from chat.md import render_markdown
+
+    html = render_markdown(final.content)
+    assert '<a href="https://youtube.com/@ashkernms"' in html
+
+
+def test_inject_seen_links_cas_limites():
+    from chat.research import inject_seen_links, seen_urls
+
+    findings = "[Ashker NMS](https://youtube.com/@ashkernms) en live."
+    assert seen_urls(findings) == ["https://youtube.com/@ashkernms"]
+    assert seen_urls("Voir https://a.fr/x., et https://a.fr/x") == ["https://a.fr/x"]
+    # Sans URL : texte intact.
+    assert inject_seen_links("Ashker fait des lives.", "Ashker fait des lives.") == "Ashker fait des lives."
+    # Déjà lié : pas de double-liaison.
+    linked = "[Ashker NMS](https://youtube.com/@ashkernms) en live."
+    assert inject_seen_links(linked, findings) == linked
+    # Code protégé.
+    code = "`Ashker NMS` et ```\nAshker NMS\n``` puis Ashker NMS."
+    out = inject_seen_links(code, findings)
+    assert "`Ashker NMS`" in out and "```\nAshker NMS\n```" in out
+    assert out.count("[Ashker NMS](https://youtube.com/@ashkernms)") == 1
+    # Protocole dangereux jamais injecté.
+    bad = inject_seen_links("Clique ici.", "[ici](javascript:alert(1))")
+    assert bad == "Clique ici."
+    assert "javascript:" not in bad
+    # Repli slug depuis URL brute.
+    slug = inject_seen_links("Voir nms france.", "Réf : https://nms-france.fr/.")
+    assert "[nms france](https://nms-france.fr/)" in slug

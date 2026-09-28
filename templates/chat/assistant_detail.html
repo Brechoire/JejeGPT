@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ assistant.name }} — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="px-4 sm:px-8 pt-5 pb-3">
+      <div class="w-full max-w-3xl mx-auto flex items-center gap-3">
+        <a href="{% url 'chat:assistant_list' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Assistants</a>
+        <span class="flex-1"></span>
+        <form method="post" action="{% url 'chat:assistant_start_conversation' assistant.pk %}">
+          {% csrf_token %}
+          <button class="text-[0.8125rem] px-4 py-2 rounded-lg bg-ink text-white">▶ Démarrer une conversation</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <div class="px-4 sm:px-8 pb-10 w-full max-w-3xl mx-auto">
+        {% if messages %}
+        <div class="mb-4 space-y-2">
+          {% for message in messages %}
+          <div class="p-3 rounded-xl border text-[0.8125rem] {% if message.tags == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-green-50 border-green-200 text-green-800{% endif %}">{{ message }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <span class="w-11 h-11 rounded-2xl bg-ink text-white flex items-center justify-center text-xl font-semibold shrink-0" aria-hidden="true">{{ assistant.name|first|upper }}</span>
+          <div class="min-w-0 flex-1">
+            <h1 class="text-[1.25rem] font-semibold truncate">{{ assistant.name }}</h1>
+            <p class="text-xs text-[#6e6e6e]">{% if assistant.description %}{{ assistant.description }}{% else %}Sans description{% endif %} · {{ assistant.conv_count }} conversation{{ assistant.conv_count|pluralize }}</p>
+          </div>
+          <form method="post" action="{% url 'chat:assistant_duplicate' assistant.pk %}">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]" title="Dupliquer cet assistant">Dupliquer</button>
+          </form>
+        </div>
+
+        <section aria-labelledby="titre-config" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 text-[0.8125rem]">
+          <h2 id="titre-config" class="text-[0.9375rem] font-semibold">Configuration</h2>
+          <p class="text-xs text-[#6e6e6e] mt-0.5 mb-3">Copiée dans chaque nouvelle conversation. Le modèle utilisé reste celui par défaut.</p>
+          <form method="post" action="{% url 'chat:assistant_update' assistant.pk %}" class="space-y-3">
+            {% csrf_token %}
+            <label class="block">Nom<input name="name" maxlength="160" required value="{{ assistant.name }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Description<input name="description" maxlength="300" value="{{ assistant.description }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Instructions<textarea name="instructions" rows="10" placeholder="Ex. Tu es un expert, réponds en français avec des exemples." class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">{{ assistant.instructions }}</textarea></label>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="block">Température<input name="temperature" type="number" step="0.1" min="0" max="2" value="{{ assistant.temperature }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+              <label class="block">Effort
+                <select name="reasoning_effort" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 bg-white">
+                  <option value="" {% if not assistant.reasoning_effort %}selected{% endif %}>Auto</option>
+                  {% for level in effort_levels %}
+                  <option value="{{ level }}" {% if assistant.reasoning_effort == level %}selected{% endif %}>{{ level }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="flex flex-wrap gap-4">
+              <label class="inline-flex items-center gap-2"><input type="checkbox" name="web_search" value="1" {% if assistant.web_search %}checked{% endif %}> Recherche web</label>
+              <label class="inline-flex items-center gap-2"><input type="checkbox" name="thinking_enabled" value="1" {% if assistant.thinking_enabled %}checked{% endif %}> Réflexion</label>
+            </div>
+            <label class="block">Starters (un par ligne, 4 max)<textarea name="starters" rows="3" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">{{ assistant.starters }}</textarea></label>
+            {% if assistant.starter_list %}
+            <div class="rounded-lg bg-[#f4f4f4] px-3 py-2">
+              <p class="text-xs font-medium text-[#424242] mb-1">Aperçu des starters</p>
+              <ul class="text-xs text-[#424242] list-disc pl-5 space-y-0.5">
+                {% for s in assistant.starter_list %}
+                <li>{{ s }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+            <button class="px-4 py-2 rounded-lg bg-ink text-white">Enregistrer</button>
+          </form>
+        </section>
+
+        <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Conversations ({{ assistant.conv_count }})</h2>
+        {% for c in assistant_conversations %}
+        <a href="{% url 'chat:detail' c.pk %}" class="block bg-white border border-[#e5e5e5] rounded-2xl px-4 py-2.5 mb-2 text-[0.8125rem] hover:border-[#b5b5b5]" title="{{ c.title }}">
+          <span class="flex items-center gap-2">
+            <span class="flex-1 truncate font-medium">{{ c.title }}</span>
+            {% if c.model_id %}<span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242] truncate max-w-[12rem]">{{ c.model_id }}</span>{% endif %}
+          </span>
+          <span class="block mt-0.5 text-xs text-[#6e6e6e]">{{ c.updated_at|date:"d/m H:i" }}</span>
+        </a>
+        {% empty %}
+        <p class="text-[0.8125rem] text-[#6e6e6e]">Aucune conversation démarrée avec cet assistant.</p>
+        {% endfor %}
+
+        <section aria-labelledby="titre-danger" class="mt-6 border border-red-200 rounded-2xl p-4 text-[0.8125rem]">
+          <h2 id="titre-danger" class="text-[0.9375rem] font-semibold text-red-700">Zone danger</h2>
+          <p class="text-xs text-[#6e6e6e] mt-0.5 mb-2">La suppression est définitive. Les conversations seront conservées.</p>
+          <form method="post" action="{% url 'chat:assistant_delete' assistant.pk %}" onsubmit="return confirm('Supprimer l’assistant « {{ assistant.name|escapejs }} » ? Les conversations seront conservées.')">
+            {% csrf_token %}
+            <button class="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Supprimer l'assistant…</button>
+          </form>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}

@@ -1,13 +1,13 @@
 {# Contrôles modèle du composer. Requiert : conversation, controls, effort_levels. #}
-{# SANS <form> interne (interdit dans le <form> du composer) : postOpt() envoie en POST puis recharge. #}
-{# États : actif si supporté, sinon pastille grisée non-cliquable avec tooltip explicatif. #}
-<div class="flex items-center gap-0.5 shrink-0">
+{# SANS <form> interne (interdit dans le <form> du composer) : postOpt() envoie en POST #}
+{# puis remplace ce bloc (.composer-opts) par le HTML à jour — sans rechargement. #}
+<div class="composer-opts flex items-center gap-0.5 shrink-0">
   {% if controls.effort %}
   <div class="relative" x-data="{ effortMenu: false }">
     <button type="button" @click="effortMenu = !effortMenu" aria-haspopup="true" :aria-expanded="effortMenu"
             aria-label="Effort de raisonnement, niveau {{ conversation.reasoning_effort|default:'auto' }} — cliquer pour changer"
             title="Effort de raisonnement : {{ conversation.reasoning_effort|default:'auto' }}"
-            class="flex items-center gap-1 p-2 rounded-full {% if conversation.reasoning_effort %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
+            class="flex items-center gap-1 p-1.5 rounded-full {% if conversation.reasoning_effort %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 12.5a6 6 0 0111 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 12.5L11 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="12.5" r="1" fill="currentColor"/></svg>
       <span class="text-[0.6875rem] font-medium leading-none">{{ conversation.reasoning_effort|default:'auto' }}</span>
     </button>
@@ -20,19 +20,19 @@
     </div>
   </div>
   {% else %}
-  <span class="p-2 rounded-full text-[#d4d4d4]" data-tip="{% if controls.known %}Effort non supporté par {{ conversation.model_id|default:'ce modèle' }}.{% else %}Capacités non vérifiées pour {{ conversation.model_id|default:'ce modèle' }} — à déclarer dans Paramètres → Providers.{% endif %}" aria-label="Effort indisponible">
+  <span class="p-1.5 rounded-full text-[#d4d4d4]" data-tip="{% if controls.known %}Effort non supporté par {{ conversation.model_id|default:'ce modèle' }}.{% else %}Capacités non vérifiées pour {{ conversation.model_id|default:'ce modèle' }} — à déclarer dans Paramètres → Providers.{% endif %}" aria-label="Effort indisponible">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 12.5a6 6 0 0111 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 12.5L11 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="12.5" r="1" fill="currentColor"/></svg>
   </span>
   {% endif %}
   {% if controls.web %}
   <button type="button" data-url="{% url 'chat:conversation_update' conversation.pk %}" data-params='{"web_search": "{% if conversation.web_search %}0{% else %}1{% endif %}"}' @click="postOpt($el)"
           aria-label="Recherche web : {% if conversation.web_search %}activée{% else %}désactivée{% endif %} — cliquer pour changer"
-          title="Recherche web : {% if conversation.web_search %}activée{% else %}désactivée{% endif %}"
-          class="p-2 rounded-full {% if conversation.web_search %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
+          title="Recherche web : {% if conversation.web_search %}activée{% else %}désactivée{% endif %} — active aussi les liens cliquables sur les noms cités"
+          class="p-1.5 rounded-full {% if conversation.web_search %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M2 8h12M8 2c-4 4-4 8 0 12M8 2c4 4 4 8 0 12" stroke="currentColor" stroke-width="1.2"/></svg>
   </button>
   {% else %}
-  <span class="p-2 rounded-full text-[#d4d4d4]" data-tip="{% if controls.known %}Recherche web non supportée par {{ conversation.model_id|default:'ce modèle' }}.{% else %}Capacités non vérifiées pour {{ conversation.model_id|default:'ce modèle' }} — à déclarer dans Paramètres → Providers.{% endif %}" aria-label="Recherche web indisponible">
+  <span class="p-1.5 rounded-full text-[#d4d4d4]" data-tip="{% if controls.known %}Recherche web non supportée par {{ conversation.model_id|default:'ce modèle' }}.{% else %}Capacités non vérifiées pour {{ conversation.model_id|default:'ce modèle' }} — à déclarer dans Paramètres → Providers.{% endif %}" aria-label="Recherche web indisponible">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M2 8h12M8 2c-4 4-4 8 0 12M8 2c4 4 4 8 0 12" stroke="currentColor" stroke-width="1.2"/></svg>
   </span>
   {% endif %}
@@ -40,11 +40,11 @@
   <button type="button" data-url="{% url 'chat:research_start' conversation.pk %}" onclick="startResearch(this)"
           aria-label="Recherche approfondie — cliquer pour lancer"
           title="Recherche approfondie : 3 cycles max, rapport sourcé dans une conversation dédiée (facturation provider)"
-          class="p-2 rounded-full hover:bg-[#f4f4f4] text-[#424242]">
+          class="p-1.5 rounded-full hover:bg-[#f4f4f4] text-[#424242]">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M7 4.5v5M4.5 7h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
   </button>
   {% else %}
-  <span class="p-2 rounded-full text-[#d4d4d4]" data-tip="Recherche approfondie non supportée par ce modèle — choisissez un modèle avec recherche web." aria-label="Recherche approfondie indisponible">
+  <span class="p-1.5 rounded-full text-[#d4d4d4]" data-tip="Recherche approfondie non supportée par ce modèle — choisissez un modèle avec recherche web." aria-label="Recherche approfondie indisponible">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M7 4.5v5M4.5 7h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
   </span>
   {% endif %}
@@ -52,12 +52,18 @@
   <button type="button" data-url="{% url 'chat:conversation_update' conversation.pk %}" data-params='{"thinking_enabled": "{% if conversation.thinking_enabled %}0{% else %}1{% endif %}"}' @click="postOpt($el)"
           aria-label="Réflexion : {% if conversation.thinking_enabled %}activée{% else %}coupée{% endif %} — cliquer pour changer"
           title="Réflexion : {% if conversation.thinking_enabled %}activée{% else %}coupée{% endif %}"
-          class="p-2 rounded-full {% if conversation.thinking_enabled %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
+          class="p-1.5 rounded-full {% if conversation.thinking_enabled %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1l1.8 4.2L14 7l-4.2 1.8L8 13l-1.8-4.2L2 7l4.2-1.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
   </button>
   {% else %}
-  <span class="p-2 rounded-full text-[#d4d4d4]" data-tip="{% if controls.route == 'responses' %}Le thinking ne se coupe pas via l'API Responses — réglez l'effort.{% elif controls.known %}Réflexion non supportée par {{ conversation.model_id|default:'ce modèle' }}.{% else %}Capacités non vérifiées pour {{ conversation.model_id|default:'ce modèle' }} — à déclarer dans Paramètres → Providers.{% endif %}" aria-label="Réflexion indisponible">
+  <span class="p-1.5 rounded-full text-[#d4d4d4]" data-tip="{% if controls.route == 'responses' %}Le thinking ne se coupe pas via l'API Responses — réglez l'effort.{% elif controls.known %}Réflexion non supportée par {{ conversation.model_id|default:'ce modèle' }}.{% else %}Capacités non vérifiées pour {{ conversation.model_id|default:'ce modèle' }} — à déclarer dans Paramètres → Providers.{% endif %}" aria-label="Réflexion indisponible">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1l1.8 4.2L14 7l-4.2 1.8L8 13l-1.8-4.2L2 7l4.2-1.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
   </span>
   {% endif %}
+  <button type="button" data-url="{% url 'chat:conversation_update' conversation.pk %}" data-params='{"show_images": "{% if conversation.show_images %}0{% else %}1{% endif %}"}' @click="postOpt($el)"
+          aria-label="Images : {% if conversation.show_images %}activées{% else %}coupées{% endif %} — cliquer pour changer"
+          title="Images illustratives : {% if conversation.show_images %}activées{% else %}coupées{% endif %} (galerie web sous les réponses)"
+          class="p-1.5 rounded-full {% if conversation.show_images %}bg-ink text-white{% else %}hover:bg-[#f4f4f4] text-[#424242]{% endif %}">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.4"/><circle cx="5.5" cy="6.5" r="1.2" fill="currentColor"/><path d="M2.5 11.5l3.5-3 2.5 2 2-1.5 3 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
 </div>

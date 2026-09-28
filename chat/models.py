@@ -73,6 +73,49 @@ class Project(models.Model):
         return self.name
 
 
+class Assistant(models.Model):
+    """Assistant réutilisable type GPT : gabarit de conversation indépendant.
+
+    Catalogue à part (ni projet, ni tâche planifiée). Démarrer une conversation
+    copie instructions + réglages ; le modèle reste celui par défaut (V1).
+    Starters = texte brut, un par ligne, sans variables {{…}} (V1).
+    """
+
+    MAX_STARTERS = 4
+
+    name = models.CharField(max_length=160, unique=True)
+    description = models.CharField(max_length=300, blank=True, default="")
+    instructions = models.TextField(blank=True, default="")
+    temperature = models.FloatField(default=0.7)
+    reasoning_effort = models.CharField(max_length=10, blank=True, default="")
+    web_search = models.BooleanField(default=False)
+    thinking_enabled = models.BooleanField(default=True)
+    starters = models.TextField(
+        blank=True, default="",
+        help_text="Un starter par ligne (4 max, texte brut).",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    conversations: RelatedManager[Conversation]
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def starter_list(self) -> list[str]:
+        """Starters nettoyés : lignes non vides, 4 max."""
+        items = [(line or "").strip() for line in (self.starters or "").splitlines()]
+        return [item[:200] for item in items if item][: self.MAX_STARTERS]
+
+    @classmethod
+    def normalize_starters(cls, raw: str) -> str:
+        items = [(line or "").strip() for line in (raw or "").splitlines()]
+        kept = [item[:200] for item in items if item][: cls.MAX_STARTERS]
+        return "\n".join(kept)
+
+
 class Conversation(models.Model):
     title = models.CharField(max_length=200, default="Nouvelle conversation")
     provider = models.ForeignKey(
@@ -85,8 +128,12 @@ class Conversation(models.Model):
     reasoning_effort = models.CharField(max_length=10, blank=True, default="")
     web_search = models.BooleanField(default=False)
     thinking_enabled = models.BooleanField(default=True)
+    show_images = models.BooleanField(default=True)
     project = models.ForeignKey(
         Project, null=True, blank=True, on_delete=models.SET_NULL, related_name="conversations"
+    )
+    assistant = models.ForeignKey(
+        Assistant, null=True, blank=True, on_delete=models.SET_NULL, related_name="conversations"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -237,7 +284,7 @@ class UsageRecord(models.Model):
 
 
 class Export(models.Model):
-    FORMATS = [(fmt, fmt.upper()) for fmt in ("pdf", "docx", "xlsx", "pptx")]
+    FORMATS = [(fmt, fmt.upper()) for fmt in ("pdf", "docx", "xlsx", "pptx", "html", "eml")]
     message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="exports")
     format = models.CharField(max_length=4, choices=FORMATS)
     download_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
@@ -279,6 +326,16 @@ class ScheduledTask(models.Model):
     next_run = models.DateTimeField(null=True, blank=True)
     last_hash = models.CharField(max_length=64, blank=True, default="")
     last_excerpt = models.CharField(max_length=500, blank=True, default="")
+    trigger_url = models.URLField(max_length=500, blank=True, default="")
+    trigger_mode = models.CharField(
+        max_length=8,
+        choices=[("change", "Changement"), ("keyword", "Mot-clé")],
+        default="change",
+    )
+    trigger_keyword = models.CharField(max_length=200, blank=True, default="")
+    last_check = models.DateTimeField(null=True, blank=True)
+    last_trigger_hash = models.CharField(max_length=64, blank=True, default="")
+    sites = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -294,6 +351,7 @@ class ScheduledRun(models.Model):
         ("catchup", "Rattrapage"),
         ("manual", "Manuelle"),
         ("draft", "Brouillon"),
+        ("trigger", "Déclenchement"),
     ]
 
     task = models.ForeignKey(ScheduledTask, on_delete=models.CASCADE, related_name="runs")

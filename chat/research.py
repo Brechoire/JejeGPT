@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 
 from django.conf import settings
 from django.db import close_old_connections
 
-from .scheduler.engine import SOURCES_SUFFIX
+from .scheduler.engine import LINK_RULE, SOURCES_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +17,79 @@ RESEARCH_MAX_CYCLES = 3
 CYCLE_SYSTEM = (
     "Tu es un assistant de recherche web. À partir du sujet et des découvertes "
     "déjà faites, fournis en Markdown concis : 1) les points clés vérifiés avec "
-    "leurs sources (liens directs), 2) de nouvelles requêtes à explorer ensuite."
+    "leurs sources (liens directs), 2) de nouvelles requêtes à explorer ensuite. "
+    + LINK_RULE
 )
 
 SYNTHESIS_SYSTEM = (
     "Tu rédiges un rapport de recherche approfondie en Markdown français structuré "
     "(titres, listes, tableaux si pertinent, exemples concrets). "
-    + SOURCES_SUFFIX
+    "Toute entité reprise des Découvertes s'écrit [Nom exact](URL) avec l'URL telle "
+    "qu'elle figure dans les Découvertes ; quand tu compares ou classes des entités "
+    "(chaînes, outils, lieux…), utilise un tableau | Entité | Détail | Lien |. "
+    "Les noms nus sont interdits si leur URL figure dans les Découvertes. "
+    + SOURCES_SUFFIX + " " + LINK_RULE
 )
+
+_RE_SEEN_URL = re.compile(r"https?://[^\s<>\]\)]+")
+_RE_MD_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
+_RE_FENCED = re.compile(r"```.*?```", re.DOTALL)
+_RE_INLINE_CODE = re.compile(r"`[^`\n]+`")
+
+
+def seen_urls(findings_text: str) -> list[str]:
+    """URL vues dans les découvertes, dédupliquées, ordre conservé."""
+    seen: list[str] = []
+    for url in _RE_SEEN_URL.findall(findings_text or ""):
+        url = url.rstrip(".,;:")
+        if url not in seen:
+            seen.append(url)
+    return seen
+
+
+def inject_seen_links(synthesis_md: str, findings_text: str) -> str:
+    """Relie les noms nus de la synthèse aux URL vues dans les découvertes.
+
+    Construit nom→URL depuis les couples [nom](url) des découvertes (repli :
+    nom = dernier segment lisible de l'URL), puis remplace les occurrences nues
+    par [Nom](URL). Idempotent, ignore le code (inline/blocs) et les liens
+    existants, n'invente jamais d'URL (zéro correspondance → texte intact).
+    """
+    if not synthesis_md or not findings_text:
+        return synthesis_md
+    pairs: dict[str, tuple[str, str]] = {}
+    for name, url in _RE_MD_LINK.findall(findings_text):
+        label = name.strip()
+        if label and label.lower() not in pairs and url.startswith(("http://", "https://")):
+            pairs[label.lower()] = (label, url)
+    for url in seen_urls(findings_text):
+        segment = url.rstrip("/").rsplit("/", 1)[-1]
+        segment = re.sub(r"\.[a-z]{2,6}$", "", segment)  # nom de domaine nu → sans TLD
+        slug = segment.replace("-", " ").replace("_", " ").strip()
+        if slug and slug.lower() not in pairs and len(slug) >= 3:
+            pairs[slug.lower()] = (slug, url)
+    if not pairs:
+        return synthesis_md
+    # Protège code (blocs + inline) et liens existants via placeholders.
+    saved: list[str] = []
+
+    def _save(match: re.Match) -> str:
+        saved.append(match.group(0))
+        return f"\x00{len(saved) - 1}\x00"
+
+    protected = _RE_FENCED.sub(_save, synthesis_md)
+    protected = _RE_INLINE_CODE.sub(_save, protected)
+    protected = re.sub(r"\[[^\]\n]+\]\([^)\s]+\)", _save, protected)
+    # Noms longs d'abord (évite de lier un préfixe d'un nom composé).
+    for _key, (label, url) in sorted(pairs.items(), key=lambda kv: -len(kv[1][0])):
+        protected = re.sub(
+            r"(?<![\w\]/])" + re.escape(label) + r"(?![\w(])",
+            f"[{label}]({url})",
+            protected,
+            count=0,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(r"\x00(\d+)\x00", lambda m: saved[int(m.group(1))], protected)
 
 
 def active_run_for(source_conv):
@@ -166,15 +232,22 @@ def _run_research(run_pk: int) -> bool:
             _set_run(run, cycles_done=cycle)
         _set_run(run, step="Synthèse du rapport…")
         usage = providers._empty_usage()
+        joined = "\n".join(findings)
+        urls = seen_urls(joined)
+        urls_section = (
+            "URLs vues (réutilise uniquement celles-ci, aucune autre) :\n"
+            + ("\n".join(f"- {url}" for url in urls) if urls else "(aucune)")
+        )
         final = _complete(
             provider, model_id,
             [
                 {"role": "system", "content": SYNTHESIS_SYSTEM},
-                {"role": "user", "content": f"Sujet : {run.subject}\nDécouvertes :\n" + "\n".join(findings)},
+                {"role": "user", "content": f"Sujet : {run.subject}\nDécouvertes :\n{joined}\n\n{urls_section}"},
             ],
             conv, usage, f"{run.pk}-final",
         )
         _record(conv, provider, model_id, usage, success=True)
+        final = inject_seen_links(final, joined)
         Message.objects.create(conversation=conv, role="assistant", content=final)
         conv.save()
         _set_run(run, status="done", step="", cycles_done=run.max_cycles)

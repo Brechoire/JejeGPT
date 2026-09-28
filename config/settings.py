@@ -122,7 +122,12 @@ JEJEGPT_DEFAULT_SYSTEM_PROMPT = env(
     "paragraphes courts, listes à puces avec mots-clés en **gras**, tableaux Markdown "
     "dès qu'il y a comparaison, classement ou exemples (2 colonnes minimum), exemples "
     "concrets et chiffrés. Interdit : les longs pavés de texte brut et les tirets "
-    "collés en ligne sans sauts de ligne. Ton direct et utile. Si l'utilisateur demande "
+    "collés en ligne sans sauts de ligne. Ton direct et utile. Entités nommées "
+    "cliquables : quand tu cites une entité nommée (chaîne YouTube, article, outil, "
+    "lieu…), écris-la en lien Markdown [Nom exact](https://URL officielle) avec "
+    "l'URL vue pendant la recherche ou déjà présente dans la conversation ; si tu "
+    "n'as vu aucune URL pour elle, laisse le nom en texte seul — n'invente jamais "
+    "d'URL. Si l'utilisateur demande "
     "un fichier (PDF, Word, Excel, PowerPoint) : ne dis jamais que tu ne peux pas joindre "
     "de fichier et ne propose aucun script d'installation ; produis directement le contenu "
     "complet en Markdown structuré, car un lien de téléchargement sera joint automatiquement.",
@@ -140,3 +145,9 @@ JEJEGPT_SCHEDULER_MAX_TASKS = int(env("JEJEGPT_SCHEDULER_MAX_TASKS", "20"))
 JEJEGPT_SCHEDULER_MAX_FAILURES = int(env("JEJEGPT_SCHEDULER_MAX_FAILURES", "3"))
 JEJEGPT_MEMORY_MAX_FACTS = int(env("JEJEGPT_MEMORY_MAX_FACTS", "50"))
 JEJEGPT_MEMORY_MAX_CHARS = int(env("JEJEGPT_MEMORY_MAX_CHARS", "2000"))
+# Images web illustratives (style ChatGPT) : hotlink, jamais de binaire persisté.
+JEJEGPT_IMAGE_SEARCH_PROVIDER = env("JEJEGPT_IMAGE_SEARCH_PROVIDER", "duckduckgo")
+JEJEGPT_IMAGE_SEARCH_API_KEY = env("JEJEGPT_IMAGE_SEARCH_API_KEY", "")
+JEJEGPT_IMAGE_SEARCH_MAX_IMAGES = int(env("JEJEGPT_IMAGE_SEARCH_MAX_IMAGES", "3"))
+JEJEGPT_IMAGE_SEARCH_AUTO_ENABLED = env("JEJEGPT_IMAGE_SEARCH_AUTO_ENABLED", "1") == "1"
+JEJEGPT_IMAGE_SEARCH_TIMEOUT = float(env("JEJEGPT_IMAGE_SEARCH_TIMEOUT", "5"))

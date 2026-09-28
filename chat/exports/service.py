@@ -8,6 +8,8 @@ from django.core.files.base import ContentFile
 from ..models import Export, Message
 from .core import check_quota, check_size, safe_name
 from .docx_gen import build_docx
+from .eml_gen import build_eml
+from .html_gen import build_html
 from .pdf_gen import build_pdf
 from .pptx_gen import build_pptx
 from .xlsx_gen import build_xlsx
@@ -17,6 +19,8 @@ _BUILDERS = {
     "docx": build_docx,
     "xlsx": build_xlsx,
     "pptx": build_pptx,
+    "html": build_html,
+    "eml": build_eml,
 }
 
 FORMATS = tuple(_BUILDERS)

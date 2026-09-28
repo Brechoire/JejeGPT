@@ -43,6 +43,38 @@
   </div>
 </div>
 
+{% if usage_totals.calls %}
+<h3 class="text-sm font-semibold mb-2">Tendances ({{ usage_period }} derniers jours)</h3>
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-2.5 mb-6">
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4 overflow-x-auto">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide mb-2">Appels par jour</p>
+    <div class="flex items-end gap-[3px] h-16 min-w-max">
+      {% for day in usage_per_day %}
+      <div class="w-[9px] rounded-[2px] bg-[#ff7a1a]" style="height:{% widthratio day.calls usage_totals.calls 100 %}%" title="{{ day.date|date:'d M' }} — {{ day.calls }} appel(s)"></div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide mb-2">Heures les plus actives</p>
+    {% for row in usage_peak_hours %}
+    <p class="text-xs py-0.5">{{ row.hour|stringformat:"02d" }}h — {{ row.calls }} appel(s)</p>
+    {% empty %}
+    <p class="text-xs text-[#6e6e6e]">Aucune donnée sur la période.</p>
+    {% endfor %}
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide mt-3 mb-1">Feedback réponses</p>
+    <p class="text-xs">👍 {{ usage_feedback.up }} · 👎 {{ usage_feedback.down }} · sur {{ usage_feedback.total }} réponses</p>
+  </div>
+  <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4">
+    <p class="text-[0.6875rem] text-[#6e6e6e] uppercase tracking-wide mb-2">Top conversations (tokens)</p>
+    {% for row in usage_top_convs %}
+    <p class="text-xs py-0.5 truncate" title="{{ row.conversation__title|default:'(sans titre)' }} — {{ row.total }} tokens, {{ row.calls }} appel(s)">{{ row.conversation__title|default:"(sans titre)"|truncatechars:35 }} — {{ row.total }}</p>
+    {% empty %}
+    <p class="text-xs text-[#6e6e6e]">Aucune donnée sur la période.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <h3 class="text-sm font-semibold mb-2">Activité ({{ usage_period }} derniers jours)</h3>
 <div class="bg-white border border-[#e5e5e5] rounded-2xl p-4 mb-6 overflow-x-auto">
   <div class="flex gap-[3px] min-w-max">

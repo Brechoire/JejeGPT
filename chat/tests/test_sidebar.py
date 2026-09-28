@@ -22,7 +22,7 @@ def test_thread_scrollbar_bord_fenetre_contenu_centre():
     Message.objects.create(conversation=conv, role="user", content="hello")
     html = Client().get(f"/{conv.pk}/").content.decode()
     assert '<div id="thread" class="flex-1 overflow-y-auto"' in html
-    assert '<div id="thread-box" class="w-full max-w-3xl mx-auto px-4 sm:px-6 py-2 space-y-8">' in html
+    assert '<div id="thread-box" class="w-full max-w-5xl mx-auto px-4 sm:px-6 py-2 space-y-8">' in html
 
 
 def test_exports_presentes_en_pastilles_et_cartes():

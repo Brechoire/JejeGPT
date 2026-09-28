@@ -11,7 +11,7 @@
       <span class="font-semibold text-[0.9375rem]">JejeGPT</span>
       <svg width="14" height="14" viewBox="0 0 16 16" class="text-[#6e6e6e]"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
     </a>
-    <button class="p-1.5 rounded-lg hover:bg-[#f4f4f4] text-[#6e6e6e]" title="Recherche (bientôt)">
+    <button type="button" onclick="document.getElementById('sidebar-filter')?.focus()" class="p-1.5 rounded-lg hover:bg-[#f4f4f4] text-[#6e6e6e]" title="Rechercher dans les projets et conversations" aria-label="Rechercher dans les projets et conversations">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     </button>
     <button @click="sidebarOpen = !sidebarOpen" class="p-1.5 rounded-lg hover:bg-[#f4f4f4] text-[#6e6e6e]" title="Masquer le panneau">
@@ -21,10 +21,16 @@
 
   <div class="px-3 pb-2">
     <div class="segmented flex text-[0.8125rem] font-medium">
-      <button class="flex-1 py-1.5 active">Chat</button>
-      <button class="flex-1 py-1.5" title="Bientôt disponible">Work</button>
-      <button class="flex-1 py-1.5" title="Bientôt disponible">Code</button>
+      <a href="{% url 'chat:index' %}" class="flex-1 py-1.5 text-center{% if sidebar_tab != "assistants" %} active{% endif %}"{% if sidebar_tab != "assistants" %} aria-current="page"{% endif %}>Chat</a>
+      <a href="{% url 'chat:assistant_list' %}" class="flex-1 py-1.5 text-center{% if sidebar_tab == "assistants" %} active{% endif %}"{% if sidebar_tab == "assistants" %} aria-current="page"{% endif %}>Assistants</a>
     </div>
+  </div>
+
+  <div class="px-3 pb-1">
+    <label class="flex items-center gap-2 px-3 py-[7px] rounded-lg border border-[#e5e5e5] bg-white text-sm focus-within:border-[#b5b5b5]">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="shrink-0 text-[#6e6e6e]"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <input id="sidebar-filter" type="search" placeholder="Rechercher…" aria-label="Rechercher dans les projets et conversations" autocomplete="off" class="flex-1 min-w-0 bg-transparent outline-none placeholder:text-[#b4b4b4]" oninput="filterSidebar(this)" onkeydown="if(event.key==='Escape'){this.value='';filterSidebar(this);}">
+    </label>
   </div>
 
   <div class="px-3 pb-1">
@@ -36,10 +42,10 @@
       </button>
     </form>
     <div class="mt-1 text-sm text-[#424242]">
-      <div class="flex items-center gap-2 px-3 py-[7px] rounded-lg hover:bg-[#f4f4f4]" title="Bientôt disponible">
+      <a href="{% url 'chat:settings_tab' tab='personnalisation' %}" class="flex items-center gap-2 px-3 py-[7px] rounded-lg hover:bg-[#f4f4f4]" title="Personnaliser le contexte (mémoire, instructions)">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/><circle cx="3" cy="5" r="1.4" fill="currentColor"/><circle cx="13" cy="5" r="1.4" fill="currentColor"/><circle cx="3" cy="11" r="1.4" fill="currentColor"/><circle cx="13" cy="11" r="1.4" fill="currentColor"/></svg>
         Contexte
-      </div>
+      </a>
       <a href="{% url 'chat:scheduled_list' %}" class="flex items-center gap-2 px-3 py-[7px] rounded-lg hover:bg-[#f4f4f4]">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         Planifiées
@@ -49,23 +55,31 @@
   </div>
 
   <div id="conv-list" class="flex-1 overflow-y-auto px-3 pb-2 text-sm">
-    <p class="px-3 pt-1 pb-1 text-xs text-[#6e6e6e]" title="Bientôt disponible">Épinglés</p>
-    <p class="px-3 pt-1 pb-1 text-xs text-[#6e6e6e]">Projets</p>
-    <div class="px-3 pb-1 space-y-0.5 text-sm">
-      {% for p in projects %}
-      <a href="{% url 'chat:project_detail' p.pk %}" class="conv-item flex items-center gap-1 px-2 py-[7px] {% if project and p.pk == project.pk %}active{% endif %}" title="{{ p.instructions|default:'Sans instructions'|truncatechars:80 }}">
-        <span class="flex-1 truncate">{{ p.name }}</span>
-        <span class="text-[0.6875rem] text-[#6e6e6e]">{{ p.conversations.all|length }}</span>
-      </a>
-      {% endfor %}
-      <form method="post" action="{% url 'chat:project_create' %}" class="flex gap-1 px-1 pt-1">
-        {% csrf_token %}
-        <input name="name" maxlength="160" required placeholder="Nouveau projet…" aria-label="Nom du nouveau projet" class="flex-1 min-w-0 text-sm border border-[#e5e5e5] rounded-lg px-2 py-1 bg-white">
-        <button class="shrink-0 px-2 py-1 rounded-lg hover:bg-[#f4f4f4] text-sm" title="Créer le projet">+</button>
-      </form>
+    <div id="sidebar-pinned">
+      <p class="px-3 pt-1 pb-1 text-xs text-[#6e6e6e]">Épinglés</p>
+      <p class="px-3 pb-1 text-[0.75rem] text-[#b4b4b4]">Aucun épinglé pour l'instant.</p>
     </div>
+    <div data-filter-section="projects">
+      <p class="px-3 pt-1 pb-1 text-xs text-[#6e6e6e]">Projets</p>
+      <div class="px-3 pb-1 space-y-0.5 text-sm">
+        {% for p in projects %}
+        <a href="{% url 'chat:project_detail' p.pk %}" data-filter-item data-filter-text="{{ p.name|lower }}" class="conv-item flex items-center gap-1 px-2 py-[7px] {% if project and p.pk == project.pk or p.pk == active_project_id %}active{% endif %}" title="{{ p.name }}{% if p.instructions %} — {{ p.instructions|striptags|truncatechars:80 }}{% else %} — Sans instructions{% endif %}">
+          <span class="flex-1 truncate">{{ p.name }}</span>
+          <span class="text-[0.6875rem] text-[#6e6e6e]" title="{{ p.conv_count|default:0 }} conversation(s)">{{ p.conv_count|default:0 }}</span>
+        </a>
+        {% empty %}
+        <p class="px-2 py-1 text-[0.75rem] text-[#b4b4b4]">Aucun projet.</p>
+        {% endfor %}
+      </div>
+    </div>
+    <form id="sidebar-project-form" method="post" action="{% url 'chat:project_create' %}" class="flex gap-1 px-4 pt-1 pb-1">
+      {% csrf_token %}
+      <input name="name" maxlength="160" required placeholder="Nouveau projet…" aria-label="Nom du nouveau projet" class="flex-1 min-w-0 text-sm border border-[#e5e5e5] rounded-lg px-2 py-1 bg-white">
+      <button class="shrink-0 px-2 py-1 rounded-lg hover:bg-[#f4f4f4] text-sm" title="Créer le projet">+</button>
+    </form>
     <p class="px-3 pt-1 pb-1 text-xs text-[#6e6e6e]">Chats</p>
     {% include "chat/partials/sidebar_conversations.html" %}
+    <p id="sidebar-no-result" class="hidden px-3 py-2 text-[0.8125rem] text-[#6e6e6e]">Aucun résultat. <button type="button" class="underline hover:text-ink" onclick="var i=document.getElementById('sidebar-filter');if(i){i.value='';filterSidebar(i);i.focus();}">Effacer la recherche</button></p>
   </div>
 
   <div class="p-3 border-t border-[#ececec] space-y-3">

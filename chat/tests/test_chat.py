@@ -466,11 +466,11 @@ def test_rich_render_tables_headings_hr():
         "### Exemple 1 : tri Gmail\n"
     )
     html = render_markdown(text)
-    assert "<h2>" in html and "🚀" in html
-    assert "<h3>" in html
+    assert "<h2 id=" in html and "🚀" in html
+    assert "<h3 id=" in html
     assert "<strong>automatiser des workflows</strong>" in html
     assert "<ol>" in html and "<ul>" in html
-    assert 'class="table-wrap"><table>' in html
+    assert 'class="table-wrap"' in html and 'class="table-scroll"><table>' in html
     assert "<th>" in html and "<td>" in html
     assert "<hr" in html
 
@@ -906,7 +906,9 @@ def test_composer_shows_only_supported_controls():
     c.model_id = "glm-5.3-flash"
     c.save()
     html2 = Client().get(f"/{c.pk}/").content.decode()
-    assert "Effort de raisonnement" not in html2
+    # Assertion scopée au toggle du composer (« , niveau ») : le picker liste aussi
+    # les badges des autres modèles (dont l'Effort de muse-spark), ce qui est voulu.
+    assert "Effort de raisonnement, niveau" not in html2
 
 
 @pytest.mark.django_db
@@ -1162,8 +1164,8 @@ def test_thread_action_bar_rendered():
     c.messages.create(role="user", content="ma question")
     c.messages.create(role="assistant", content="réponse")
     html = Client().get(f"/{c.pk}/").content.decode()
-    # question : copier, modifier, régénérer ; réponse : copier, +/-, régénérer
-    assert html.count("msg-action") == 7
+    # question : copier, modifier, régénérer ; réponse : copier, +/-, régénérer, 3 canaux newsletter
+    assert html.count("msg-action") == 10
     assert 'data-tip="Copier"' in html
     assert 'data-tip="Modifier"' in html
     assert "Régénérer la réponse" in html

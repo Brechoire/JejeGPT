@@ -43,19 +43,25 @@
       el.style.height = Math.min(el.scrollHeight, max) + 'px';
       el.style.overflowY = el.scrollHeight > max + 1 ? 'auto' : 'hidden';
     }
-    // POST d'option sans <form> imbriqué (interdit en HTML) : recharge ensuite.
+    // POST d'option sans <form> imbriqué (interdit en HTML) : le serveur renvoie
+    // le bloc d'options à jour, remplacé en place — sans rechargement de page.
     async function postOpt(btn) {
       let params = {};
       try { params = JSON.parse(btn.dataset.params || '{}'); } catch { params = {}; }
       const form = btn.closest('form');
       const csrfInput = form ? form.querySelector('input[name=csrfmiddlewaretoken]') : null;
       const csrf = csrfInput ? csrfInput.value : '';
+      const box = btn.closest('.composer-opts');
       const body = new FormData();
       body.append('csrfmiddlewaretoken', csrf);
       for (const [k, v] of Object.entries(params)) body.append(k, v);
       try {
-        await fetch(btn.dataset.url, {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}});
-        window.location.reload();
+        const resp = await fetch(btn.dataset.url, {
+          method: 'POST', body: body,
+          headers: {'X-CSRFToken': csrf, 'HX-Request': 'true'},
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (box) box.innerHTML = await resp.text();
       } catch (e) {
         console.error(e);
         alert('Échec de la mise à jour. Réessayez.');
@@ -91,6 +97,74 @@
         setTimeout(() => { btn.dataset.tip = 'Copier'; }, 1500);
       });
     }
+    // Newsletter par canal : chaque clic régénère une version adaptée (mailto court,
+    // HTML riche, .eml complet) puis exécute l'action. État "…" pendant l'appel.
+    function newsletterCsrf() {
+      const input = document.querySelector('input[name=csrfmiddlewaretoken]');
+      return input ? input.value : '';
+    }
+    async function postNewsletterChannel(btn, onSuccess) {
+      const csrf = newsletterCsrf();
+      const body = new FormData();
+      body.append('csrfmiddlewaretoken', csrf);
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        const resp = await fetch(btn.dataset.url, {
+          method: 'POST', body: body,
+          headers: {'X-CSRFToken': csrf, 'HX-Request': 'true', 'Accept': 'application/json'},
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        await onSuccess(data);
+      } catch (e) {
+        console.error(e);
+        alert(e.message || 'Échec de la génération. Réessayez.');
+      } finally {
+        if (!btn.dataset.noRestore) btn.textContent = original;
+        else delete btn.dataset.noRestore;
+        btn.disabled = false;
+      }
+    }
+    function postNewsletterMailto(btn) {
+      postNewsletterChannel(btn, async (data) => { window.location.href = data.mailto; });
+    }
+    function postNewsletterHTML(btn) {
+      postNewsletterChannel(btn, async (data) => {
+        if (window.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': new Blob([data.html], {type: 'text/html'}),
+              'text/plain': new Blob([data.html.replace(/<[^>]+>/g, ' ')], {type: 'text/plain'}),
+            }),
+          ]);
+        } else {
+          await navigator.clipboard.writeText(data.html);
+        }
+        btn.dataset.noRestore = '1';
+        btn.textContent = 'Copié ✓';
+        setTimeout(() => { btn.textContent = '🌐'; }, 1500);
+      });
+    }
+    function postNewsletterEML(btn) {
+      postNewsletterChannel(btn, async (data) => { window.location.href = data.download; });
+    }
+    // Copie d'un tableau en CSV (barre générée server-side, voir chat/md.py).
+    // Séparateur point-virgule (compatible Excel FR), cellules entre guillemets.
+    function copyTableCSV(btn) {
+      const table = btn.closest('.table-wrap').querySelector('table');
+      const rows = Array.prototype.map.call(table.querySelectorAll('tr'), function(tr) {
+        return Array.prototype.map.call(tr.querySelectorAll('th,td'), function(cell) {
+          return '"' + cell.innerText.replace(/"/g, '""') + '"';
+        }).join(';');
+      }).join('\n');
+      navigator.clipboard.writeText(rows).then(() => {
+        const label = btn.textContent;
+        btn.textContent = 'Copié ✓';
+        setTimeout(() => { btn.textContent = label; }, 1500);
+      });
+    }
     // Copie du bloc de code (barre générée server-side, voir chat/md.py).
     function copyCode(btn) {
       const code = btn.closest('.codeblock').querySelector('code').innerText;
@@ -118,6 +192,41 @@
       setInterval(refreshBadge, 15000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBadge(); });
     })();
+    // Filtre local de la sidebar (projets + conversations) : 100 % client,
+    // sans endpoint. Insensible à la casse et aux accents. Réappliqué
+    // après chaque swap HTMX de la liste des conversations.
+    function normTxt(s) {
+      return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    }
+    function filterSidebar(input) {
+      var field = input || document.getElementById('sidebar-filter');
+      var q = normTxt(field && field.value ? field.value : '');
+      var list = document.getElementById('conv-list');
+      if (!list) return;
+      var items = list.querySelectorAll('[data-filter-item]');
+      var visible = 0;
+      items.forEach(function(el) {
+        var hay = normTxt(el.getAttribute('data-filter-text') || el.textContent);
+        var show = !q || hay.indexOf(q) !== -1;
+        el.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      list.querySelectorAll('[data-filter-section]').forEach(function(sec) {
+        var anyVisible = Array.prototype.some.call(
+          sec.querySelectorAll('[data-filter-item]'),
+          function(el) { return el.style.display !== 'none'; }
+        );
+        sec.style.display = anyVisible ? '' : 'none';
+      });
+      var pinned = document.getElementById('sidebar-pinned');
+      if (pinned) pinned.style.display = q ? 'none' : '';
+      var empty = document.getElementById('sidebar-no-result');
+      if (empty) empty.classList.toggle('hidden', visible !== 0);
+    }
+    document.body.addEventListener('htmx:afterSwap', function() {
+      var field = document.getElementById('sidebar-filter');
+      if (field && field.value) filterSidebar(field);
+    });
   </script>
 </body>
 </html>

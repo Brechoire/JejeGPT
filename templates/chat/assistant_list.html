@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Assistants — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768, showCreate: false }">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="px-4 sm:px-8 pt-5 pb-3">
+      <div class="w-full max-w-3xl mx-auto">
+        {% if conversation %}
+        <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Retour au chat</a>
+        {% else %}
+        <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Retour au chat</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <div class="px-4 sm:px-8 pb-10 w-full max-w-3xl mx-auto">
+        <div class="flex flex-wrap items-center gap-3 mb-1">
+          <div class="min-w-0 flex-1">
+            <h1 class="text-[1.25rem] font-semibold">Assistants ({{ assistants_page|length }})</h1>
+            <p class="text-xs text-[#6e6e6e] mt-0.5">Gabarits réutilisables, modèle par défaut, starters en texte brut.</p>
+          </div>
+          <button @click="showCreate = !showCreate" class="shrink-0 px-4 py-2 rounded-lg bg-ink text-white text-[0.8125rem]" :aria-expanded="showCreate.toString()">+ Nouvel assistant</button>
+        </div>
+
+        {% if messages %}
+        <div class="mt-3 space-y-2">
+          {% for message in messages %}
+          <div class="p-3 rounded-xl border text-[0.8125rem] {% if message.tags == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-green-50 border-green-200 text-green-800{% endif %}">{{ message }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <section x-show="showCreate" aria-labelledby="titre-nouveau" class="mt-4 bg-white border border-[#e5e5e5] rounded-2xl p-4 text-[0.8125rem]">
+          <h2 id="titre-nouveau" class="text-[0.9375rem] font-semibold mb-3">Nouvel assistant</h2>
+          <form method="post" action="{% url 'chat:assistant_create' %}" class="space-y-3">
+            {% csrf_token %}
+            <label class="block">Nom<input name="name" maxlength="160" required placeholder="Ex. Relecteur FR" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Description<input name="description" maxlength="300" placeholder="Ex. Relit et reformule en français clair" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+            <label class="block">Instructions<textarea name="instructions" rows="3" placeholder="Ex. Tu es un relecteur exigeant, réponds en français avec des listes." class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></textarea></label>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="block">Température<input name="temperature" type="number" step="0.1" min="0" max="2" value="0.7" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+              <label class="block">Effort
+                <select name="reasoning_effort" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 bg-white">
+                  <option value="">Auto</option>
+                  {% for level in effort_levels %}
+                  <option value="{{ level }}">{{ level }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="flex flex-wrap gap-4">
+              <label class="inline-flex items-center gap-2"><input type="checkbox" name="web_search" value="1"> Recherche web</label>
+              <label class="inline-flex items-center gap-2"><input type="checkbox" name="thinking_enabled" value="1" checked> Réflexion</label>
+            </div>
+            <label class="block">Starters (un par ligne, 4 max)<textarea name="starters" rows="2" placeholder="Relis ce texte :&#10;Résume en 5 points :" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></textarea></label>
+            <div class="flex gap-2">
+              <button class="px-4 py-2 rounded-lg bg-ink text-white">Créer</button>
+              <button type="button" @click="showCreate = false" class="px-4 py-2 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">Annuler</button>
+            </div>
+          </form>
+        </section>
+
+        {% if assistants_page %}
+        <div class="mt-4 mb-3">
+          <label class="flex items-center gap-2 px-3 py-[7px] rounded-lg border border-[#e5e5e5] bg-white text-sm focus-within:border-[#b5b5b5]">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="shrink-0 text-[#6e6e6e]"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <input id="assistant-search" type="search" placeholder="Filtrer les assistants…" aria-label="Filtrer les assistants" autocomplete="off" class="flex-1 min-w-0 bg-transparent outline-none placeholder:text-[#b4b4b4]" oninput="filterAssistants(this)">
+          </label>
+        </div>
+        <div id="assistant-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {% for a in assistants_page %}
+          <div data-assistant-card data-filter-text="{{ a.name|lower }} {{ a.description|lower }}" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 text-[0.8125rem] flex flex-col gap-2">
+            <div class="flex items-center gap-2.5">
+              <span class="w-9 h-9 rounded-xl bg-ink text-white flex items-center justify-center font-semibold shrink-0" aria-hidden="true">{{ a.name|first|upper }}</span>
+              <div class="min-w-0 flex-1">
+                <a href="{% url 'chat:assistant_detail' a.pk %}" class="block truncate font-medium hover:underline" title="{{ a.name }}">{{ a.name }}</a>
+                <p class="text-xs text-[#6e6e6e] truncate">{% if a.description %}{{ a.description }}{% else %}Sans description{% endif %}</p>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-1.5 text-[0.6875rem]">
+              <span class="px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242]" title="Température">temp {{ a.temperature }}</span>
+              {% if a.reasoning_effort %}<span class="px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242]" title="Effort de raisonnement">{{ a.reasoning_effort }}</span>{% endif %}
+              {% if a.web_search %}<span class="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800" title="Recherche web activée">web</span>{% endif %}
+              <span class="px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242]">{{ a.starter_list|length }} starter{{ a.starter_list|length|pluralize }}</span>
+              <span class="px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242]">{{ a.conv_count }} chat{{ a.conv_count|pluralize }}</span>
+            </div>
+            <div class="flex flex-wrap gap-2 mt-auto pt-1">
+              <form method="post" action="{% url 'chat:assistant_start_conversation' a.pk %}">
+                {% csrf_token %}
+                <button class="text-xs px-3 py-1.5 rounded-lg bg-ink text-white">▶ Démarrer</button>
+              </form>
+              <a href="{% url 'chat:assistant_detail' a.pk %}" class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">Fiche</a>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <p id="assistant-no-result" class="hidden mt-3 text-[0.8125rem] text-[#6e6e6e]">Aucun assistant ne correspond à ce filtre.</p>
+        {% else %}
+        <div class="mt-4 bg-white border border-dashed border-[#b5b5b5] rounded-2xl px-4 py-6 text-center">
+          <p class="text-[0.8125rem] text-[#6e6e6e]">Aucun assistant pour l'instant. Créez le premier avec « + Nouvel assistant ».</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+function filterAssistants(input) {
+  var q = (input.value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  var cards = document.querySelectorAll('[data-assistant-card]');
+  var visible = 0;
+  cards.forEach(function(el) {
+    var hay = (el.getAttribute('data-filter-text') || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    var show = !q || hay.indexOf(q) !== -1;
+    el.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  var empty = document.getElementById('assistant-no-result');
+  if (empty) empty.classList.toggle('hidden', visible !== 0);
+}
+</script>
+{% endblock %}

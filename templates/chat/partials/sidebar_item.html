@@ -1,5 +1,6 @@
-<div class="conv-item flex items-center gap-1 px-2 py-[7px] text-sm {% if conversation and c.pk == conversation.pk %}active{% endif %}">
-  <a href="{% url 'chat:detail' c.pk %}" class="flex-1 truncate" title="{{ c.title }}">{{ c.title }}</a>
+<div class="conv-item flex items-center gap-1 px-2 py-[7px] text-sm {% if conversation and c.pk == conversation.pk %}active{% endif %}" data-filter-item data-filter-text="{{ c.title|lower }}{% if c.project %} {{ c.project.name|lower }}{% endif %}">
+  <a href="{% url 'chat:detail' c.pk %}" class="flex-1 truncate" title="{{ c.title }}{% if c.project %} ({{ c.project.name }}){% endif %}">{{ c.title }}</a>
+  {% if c.project %}<span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242] truncate max-w-[7rem]" title="Projet {{ c.project.name }}">{{ c.project.name }}</span>{% endif %}
   <form method="post" action="{% url 'chat:conversation_delete' c.pk %}" onsubmit="return confirm('Supprimer cette conversation ?')">
     {% csrf_token %}
     <button class="text-[#b4b4b4] hover:text-red-500 px-1" title="Supprimer">×</button>

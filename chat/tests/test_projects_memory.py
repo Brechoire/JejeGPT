@@ -50,10 +50,12 @@ def test_project_crud_et_conversations_conservees():
 def test_project_detail_et_nouvelle_conversation_dediee():
     project = Project.objects.create(name="Veille", instructions="Sois concis.")
     html = Client().get(reverse("chat:project_detail", args=[project.pk])).content.decode()
-    assert "Sois concis." in html and "Nouvelle conversation dans ce projet" in html
+    assert "Sois concis." in html and "Créer la première conversation" in html  # état vide avec CTA
     Client().post(reverse("chat:conversation_create"), {"project_id": str(project.pk)})
     conv = Conversation.objects.first()
     assert conv.project_id == project.pk
+    html2 = Client().get(reverse("chat:project_detail", args=[project.pk])).content.decode()
+    assert "Nouvelle conversation dans ce projet" in html2  # bouton standard dès qu'il y a des conversations
 
 
 def test_sidebar_liste_projets():
@@ -200,3 +202,63 @@ def test_project_context_vide_sans_projet_ni_instructions():
     assert project_context(conv) == ""
     conv.project = Project.objects.create(name="Vide")
     assert project_context(conv) == ""
+
+
+# ---------------- Page projet enrichie ----------------
+
+def _message(conv, role="user", content="Bonjour"):
+    from chat.models import Message
+
+    return Message.objects.create(conversation=conv, role=role, content=content)
+
+
+def test_project_detail_stats_statut_et_apercu():
+    project = Project.objects.create(name="Veille", instructions="Sois concis.")
+    conv = _conversation()
+    conv.project = project
+    conv.model_id = "modele-x"
+    conv.save()
+    _message(conv)
+    _message(conv, role="assistant", content="OK")
+    html = Client().get(reverse("chat:project_detail", args=[project.pk])).content.decode()
+    assert "Instructions actives" in html  # pastille statut
+    assert "Aperçu de ce qui est injecté" in html
+    assert "Contexte projet Veille : Sois concis." in html  # format = project_context()
+    assert "Zone danger" in html and "Supprimer le projet" in html
+    assert "conversations seront conservées" in html
+    assert "modele-x" in html and "2 messages" in html  # ligne enrichie
+    assert "bg-ink text-white" in html  # bouton Enregistrer aligné design system
+    assert "bg-green-600" not in html
+
+
+def test_project_detail_sans_n_plus_1():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    project = Project.objects.create(name="Q")
+    first = _conversation()
+    first.project = project
+    first.save()
+
+    def _n_requetes():
+        with CaptureQueriesContext(connection) as ctx:
+            Client().get(reverse("chat:project_detail", args=[project.pk]))
+        return len(ctx.captured_queries)
+
+    _n_requetes()  # warmup : coûts uniques (création AppSettings…), hors mesure
+    base = _n_requetes()
+    for _ in range(4):
+        conv = _conversation()
+        conv.project = project
+        conv.save()
+        _message(conv)
+    assert _n_requetes() == base  # annotations + prefetch : constant quelle que soit la taille
+
+
+def test_project_detail_vide_sans_instructions():
+    project = Project.objects.create(name="Vide")
+    html = Client().get(reverse("chat:project_detail", args=[project.pk])).content.decode()
+    assert "Aucune instruction" in html
+    assert "Aperçu de ce qui est injecté" not in html
+    assert "Créer la première conversation" in html  # état vide avec CTA
+    assert "0" in html  # stats à zéro sans crash (dernière activité "—")

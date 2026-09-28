@@ -1,3 +1,4 @@
+{% load model_badges %}
 <h2 class="text-base font-semibold mb-1">Général</h2>
 <p class="text-[0.8125rem] text-[#6e6e6e] mb-5">Informations sur votre espace local.</p>
 <div class="bg-white border border-[#e5e5e5] rounded-2xl divide-y divide-[#e5e5e5] text-[0.8125rem]">
@@ -50,7 +51,9 @@
       {% for p in providers %}
       <optgroup label="{{ p.name }}">
         {% for m in p.cached_models.all %}
-        <option value="{{ p.pk }}:{{ m.model_id }}" {% if app_settings.default_provider_id == p.pk and app_settings.default_model_id == m.model_id %}selected{% endif %}>{{ m.model_id }}{% if m.route %} · /{{ m.route }}{% endif %}</option>
+        {% with c=m|model_badges:p %}
+        <option value="{{ p.pk }}:{{ m.model_id }}" {% if app_settings.default_provider_id == p.pk and app_settings.default_model_id == m.model_id %}selected{% endif %}>{{ m.model_id }}{% if c.web %} · Internet{% endif %}{% if c.thinking %} · Réflexion{% endif %}{% if c.effort %} · Effort{% endif %}{% if c.route %} · /{{ c.route }}{% endif %}{% if not c.known %} · non vérifié{% endif %}</option>
+        {% endwith %}
         {% empty %}
         <option disabled>Aucun modèle — Actualiser dans Providers et modèles</option>
         {% endfor %}

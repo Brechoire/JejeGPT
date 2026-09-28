@@ -140,8 +140,35 @@ html, body {
   border: 1px solid var(--line);
   border-radius: 1rem;
   overflow: hidden;
-  overflow-x: auto;
   margin: 0.9em 0;
+}
+.table-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 1rem;
+  background: #f9f9f9;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.table-bar .table-meta {
+  font-weight: 600;
+}
+.table-bar button {
+  margin-left: auto;
+  padding: 0.15rem 0.6rem;
+  border-radius: 0.4rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: #0d0d0d;
+}
+.table-bar button:hover {
+  background: #f4f4f4;
+}
+.table-scroll {
+  overflow: auto;
+  max-height: 28rem;
 }
 .prose-jeje table {
   border-collapse: collapse;
@@ -163,9 +190,50 @@ html, body {
   letter-spacing: 0.04em;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .prose-jeje tbody tr + tr td {
   border-top: 1px solid var(--line);
+}
+.prose-jeje tbody tr:nth-child(even) td {
+  background: #fafafa;
+}
+/* Sommaire auto des longues réponses (voir chat/md.py) */
+.prose-jeje h1[id], .prose-jeje h2[id],
+.prose-jeje h3[id], .prose-jeje h4[id] {
+  scroll-margin-top: 0.5rem;
+}
+.prose-jeje .toc {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fafafa;
+  padding: 0.6rem 0.9rem;
+  margin: 0.7em 0;
+  font-size: 0.9em;
+}
+.prose-jeje .toc summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.prose-jeje .toc ul {
+  margin: 0.4em 0 0;
+  padding-left: 1.2em;
+}
+.prose-jeje .toc-h3 {
+  margin-left: 1em;
+}
+.prose-jeje .toc-h4 {
+  margin-left: 2em;
+}
+/* Pied de sources (compté au rendu, voir chat/md.py) */
+.prose-jeje .sources-note {
+  font-size: 0.8em;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 0.4em;
+  margin-top: 0.8em;
 }
 .prose-jeje a {
   color: var(--ink);
@@ -298,17 +366,72 @@ html, body {
   color: #9e9e9e;
 }
 
+/* Galerie d'images web illustratives (voir chat/md.py::_wrap_images) */
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0.9em 0 0.4em;
+}
+.image-grid a {
+  display: block;
+  border-radius: 0.9rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #f9f9f9;
+  text-decoration: none;
+}
+.image-grid img {
+  display: block;
+  width: 100%;
+  height: 11rem;
+  object-fit: cover;
+}
+.image-grid a:hover img {
+  opacity: 0.92;
+}
+.prose-jeje > p img:only-child {
+  border-radius: 0.9rem;
+  border: 1px solid var(--line);
+  max-height: 22rem;
+  width: auto;
+  max-width: 100%;
+  object-fit: cover;
+}
+@media (max-width: 640px) {
+  .image-grid {
+    grid-template-columns: 1fr;
+  }
+  .image-grid img {
+    height: auto;
+    max-height: 18rem;
+  }
+}
+
+/* Indicateur de régénération (htmx : visible seulement pendant la requête) */
+.htmx-indicator {
+  display: none;
+}
+.htmx-request .htmx-indicator {
+  display: block;
+}
+.htmx-request.htmx-indicator {
+  display: block;
+}
+
 /* Segmented control */
 .segmented {
   background: var(--hover);
   border-radius: 0.6rem;
   padding: 3px;
 }
-.segmented button {
+.segmented button,
+.segmented a {
   border-radius: 0.45rem;
   color: #424242;
 }
-.segmented button.active {
+.segmented button.active,
+.segmented a.active {
   background: #fff;
   color: var(--ink);
   box-shadow: 0 1px 3px rgba(13, 13, 13, 0.12);

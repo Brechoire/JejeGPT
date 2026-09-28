@@ -141,14 +141,28 @@ EFFORT_LEVELS = ("low", "medium", "high", "xhigh")
 THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 16384, "xhigh": 32768}
 
 
+def _controls_for(route: str, caps: dict) -> dict[str, bool]:
+    """Règle d'affichage pure (partagée par ui_controls et les badges du picker).
+
+    Mêmes contrôles que le mapping d'envoi applique :
+    - responses : effort si caps.effort, web si caps.web (pas de toggle thinking fiable).
+    - messages : effort si caps.effort ou caps.thinking (budget), thinking si caps.thinking.
+    - chat : rien (aucun paramètre standard).
+    """
+    if route == "responses":
+        return {"effort": bool(caps.get("effort")), "web": bool(caps.get("web")), "thinking": False}
+    if route == "messages":
+        return {
+            "effort": bool(caps.get("effort") or caps.get("thinking")),
+            "web": bool(caps.get("web")),
+            "thinking": bool(caps.get("thinking")),
+        }
+    return {"effort": False, "web": False, "thinking": False}
+
+
 def ui_controls(provider: Provider | None, model_id: str) -> dict:
     """Contrôles à afficher : effort / web / thinking selon route + capacités.
 
-    Règle unique (le mapping d'envoi applique exactement les mêmes) :
-    - responses : effort si caps.effort, web si caps.web (pas de toggle thinking fiable).
-    - messages : effort si caps.effort ou caps.thinking (budget), toggle thinking si
-      caps.thinking, web si caps.web.
-    - chat : rien (aucun paramètre standard).
     `known` = ligne cache existante OU entrée table statique (sinon « non vérifié »).
     """
     route = resolve_route(provider, model_id)
@@ -163,17 +177,28 @@ def ui_controls(provider: Provider | None, model_id: str) -> dict:
         and bool(cached.route or cached.supports_effort or cached.supports_web or cached.supports_thinking)
     )
     if route == "responses":
-        return {"route": route, "effort": caps["effort"], "web": caps["web"],
-                "thinking": False, "known": known}
+        return {"route": route, **_controls_for(route, caps), "known": known}
     if route == "messages":
-        return {
-            "route": route,
-            "effort": caps["effort"] or caps["thinking"],
-            "web": caps["web"],
-            "thinking": caps["thinking"],
-            "known": known,
-        }
-    return {"route": route, "effort": False, "web": False, "thinking": False, "known": known}
+        return {"route": route, **_controls_for(route, caps), "known": known}
+    return {"route": route, **_controls_for(route, caps), "known": known}
+
+
+def model_controls(model: LLMModel, base_url: str = "") -> dict:
+    """Badges picker depuis la ligne cache déjà chargée (zéro requête).
+
+    Cohérent avec ui_controls : mêmes contrôles affichés que ceux proposés
+    dans le composer. `known` = table statique OU ligne renseignée.
+    """
+    caps = {
+        "effort": bool(model.supports_effort),
+        "web": bool(model.supports_web),
+        "thinking": bool(model.supports_thinking),
+    }
+    route = model.route or lookup_route(base_url, model.model_id)
+    known = model.model_id in MODEL_CAPABILITIES or bool(
+        route or caps["effort"] or caps["web"] or caps["thinking"]
+    )
+    return {"route": route, **_controls_for(route, caps), "known": known}
 
 
 def _clean_options(options: dict | None) -> dict:
@@ -218,6 +243,33 @@ def model_capabilities(model_id: str) -> dict[str, bool]:
     if caps is None:
         return {"effort": False, "web": False, "thinking": False}
     return dict(caps)
+
+
+# Paramètres OpenRouter signalant un mode raisonnement interne
+# (doc : supported_parameters = reasoning, include_reasoning).
+# Pas de signal fiable pour les paliers d'effort (reasoning unifié effort/max_tokens)
+# ni pour le web search (plugin par requête, pas par modèle) → effort/web restent
+# statiques + manuels.
+_OPENROUTER_REASONING_PARAMS = frozenset({"reasoning", "include_reasoning"})
+
+
+def _is_openrouter(provider: Provider | None) -> bool:
+    return provider is not None and "openrouter" in _base(str(provider.base_url))
+
+
+def caps_from_openrouter(entry: dict | None) -> dict[str, bool]:
+    """Capacités déduites d'une entrée OpenRouter GET /models (conservateur).
+
+    reasoning* → thinking=True. effort/web toujours False ici : la table statique
+    (prioritaire) couvre les cas effort=True, et le web reste statique + manuel.
+    Entrée absente ou minimale → tout-False (repli existant).
+    """
+    params: set[str] = set()
+    if isinstance(entry, dict):
+        raw = entry.get("supported_parameters") or []
+        params = {str(p).lower() for p in raw if isinstance(p, str)}
+    thinking = bool(params & _OPENROUTER_REASONING_PARAMS)
+    return {"effort": False, "web": False, "thinking": thinking}
 
 
 def effective_caps(provider: Provider | None, model_id: str) -> dict[str, bool]:
@@ -425,8 +477,8 @@ def _friendly_error(exc: Exception, provider: Provider | None = None) -> Provide
     return ProviderError(f"Erreur provider : {exc}")
 
 
-def fetch_models(provider: Provider, timeout: float = 30.0) -> list[str]:
-    """Retourne les model_id via GET {base_url}/models. Lève ProviderError."""
+def fetch_model_entries(provider: Provider, timeout: float = 30.0) -> list[dict]:
+    """Entrées brutes via GET {base_url}/models (id + métadonnées éventuelles). Lève ProviderError."""
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.get(_base(provider.base_url) + MODELS_PATH, headers=_headers(provider))
@@ -437,7 +489,12 @@ def fetch_models(provider: Provider, timeout: float = 30.0) -> list[str]:
     except Exception as exc:
         raise _friendly_error(exc, provider) from exc
     items = data.get("data", []) if isinstance(data, dict) else []
-    return [str(i.get("id", "")) for i in items if isinstance(i, dict) and i.get("id")]
+    return [i for i in items if isinstance(i, dict) and i.get("id")]
+
+
+def fetch_models(provider: Provider, timeout: float = 30.0) -> list[str]:
+    """Retourne les model_id via GET {base_url}/models. Lève ProviderError."""
+    return [str(i.get("id", "")) for i in fetch_model_entries(provider, timeout=timeout)]
 
 
 def sync_models(provider: Provider, timeout: float = 30.0) -> tuple[int, str]:
@@ -448,6 +505,14 @@ def sync_models(provider: Provider, timeout: float = 30.0) -> tuple[int, str]:
         provider.last_error = exc.message
         provider.save(update_fields=["last_error", "updated_at"])
         return 0, exc.message
+    # Métadonnées riches OpenRouter (2e GET, best-effort) : seul ce provider expose
+    # supported_parameters. Échec silencieux → repli table statique + manuel.
+    entries_by_id: dict[str, dict] = {}
+    if _is_openrouter(provider):
+        try:
+            entries_by_id = {str(e.get("id")): e for e in fetch_model_entries(provider, timeout=timeout)}
+        except ProviderError:
+            entries_by_id = {}
     for mid in ids:
         obj, created = LLMModel.objects.update_or_create(
             provider=provider,
@@ -458,9 +523,15 @@ def sync_models(provider: Provider, timeout: float = 30.0) -> tuple[int, str]:
             },
         )
         if created:
-            # La table ne s'applique qu'à la création : les réglages manuels
+            # Les capacités ne s'appliquent qu'à la création : les réglages manuels
             # postérieurs (cases onglet Providers) ne sont jamais écrasés.
-            caps = model_capabilities(mid)
+            # Priorité : table statique (source de vérité) > métadonnées OpenRouter
+            # (thinking auto-détecté) > tout-False.
+            if mid in MODEL_CAPABILITIES:
+                caps = model_capabilities(mid)
+            else:
+                entry = entries_by_id.get(mid)
+                caps = caps_from_openrouter(entry) if entry is not None else model_capabilities(mid)
             obj.supports_effort = caps["effort"]
             obj.supports_web = caps["web"]
             obj.supports_thinking = caps["thinking"]

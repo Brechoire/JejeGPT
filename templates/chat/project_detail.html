@@ -6,19 +6,21 @@
   <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
 
   <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
-    <div class="px-4 sm:px-8 pt-5 pb-3 flex items-center gap-3">
+    <div class="px-4 sm:px-8 pt-5 pb-3">
+      <div class="w-full max-w-3xl mx-auto flex items-center gap-3">
       <button x-show="!sidebarOpen" @click="sidebarOpen = true" class="p-2 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Afficher le panneau" aria-label="Afficher le panneau">
         <svg width="17" height="17" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.5"/></svg>
       </button>
       {% if conversation %}
-      <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Retour au chat</a>
       {% else %}
-      <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink">← Retour au chat</a>
+      <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Retour au chat</a>
       {% endif %}
-      <h1 class="text-[1.25rem] font-semibold">Projet — {{ project.name }}</h1>
+      </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-4 sm:px-8 pb-10 w-full">
+    <div class="flex-1 overflow-y-auto">
+      <div class="px-4 sm:px-8 pb-10 w-full max-w-3xl mx-auto">
       {% if messages %}
       <div class="mb-4 space-y-2">
         {% for message in messages %}
@@ -27,36 +29,106 @@
       </div>
       {% endif %}
 
-      <form method="post" action="{% url 'chat:project_update' project.pk %}" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 space-y-3 text-[0.8125rem]">
-        {% csrf_token %}
-        <label class="block">Nom<input name="name" maxlength="160" required value="{{ project.name }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
-        <label class="block">Instructions (injectées dans chaque conversation du projet)
-          <textarea name="instructions" rows="4" placeholder="Ex. Tu es un expert SIGB, réponds toujours en français avec des exemples." class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">{{ project.instructions }}</textarea>
-        </label>
-        <div class="flex flex-wrap gap-2">
-          <button class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">Enregistrer</button>
+      {# En-tête projet : identité + stats + statut instructions #}
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        <span class="w-11 h-11 rounded-2xl bg-ink text-white flex items-center justify-center text-xl font-semibold shrink-0" aria-hidden="true">{{ project.name|first|upper }}</span>
+        <div class="min-w-0 flex-1">
+          <h1 class="text-[1.25rem] font-semibold truncate">{{ project.name }}</h1>
+          <p class="text-xs text-[#6e6e6e]">Créé le {{ project.created_at|date:"d/m/Y" }}</p>
         </div>
-      </form>
-
-      <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Conversations ({{ project.conversations.count }})</h2>
-      {% for c in project.conversations.all %}
-      <div class="bg-white border border-[#e5e5e5] rounded-2xl px-4 py-2.5 mb-2 text-[0.8125rem] flex items-center gap-2">
-        <a href="{% url 'chat:detail' c.pk %}" class="flex-1 truncate hover:text-ink" title="{{ c.title }}">{{ c.title }}</a>
-        <span class="text-xs text-[#6e6e6e]">{{ c.updated_at|date:"d/m H:i" }}</span>
+        {% if has_instructions %}
+        <span class="shrink-0 text-xs px-2.5 py-1 rounded-full bg-green-100 text-green-800" title="Des instructions sont injectées dans chaque conversation du projet">● Instructions actives</span>
+        {% else %}
+        <span class="shrink-0 text-xs px-2.5 py-1 rounded-full bg-[#f4f4f4] text-[#6e6e6e]" title="Aucune instruction : les conversations du projet n'ont pas de contexte additionnel">○ Aucune instruction</span>
+        {% endif %}
       </div>
+
+      <div class="flex flex-wrap gap-2 mb-6" role="list" aria-label="Statistiques du projet">
+        <div role="listitem" class="flex-1 min-w-[8rem] bg-white border border-[#e5e5e5] rounded-2xl px-4 py-3">
+          <p class="text-xl font-semibold">{{ project.conv_count }}</p>
+          <p class="text-xs text-[#6e6e6e]">Conversation{{ project.conv_count|pluralize }}</p>
+        </div>
+        <div role="listitem" class="flex-1 min-w-[8rem] bg-white border border-[#e5e5e5] rounded-2xl px-4 py-3">
+          <p class="text-xl font-semibold">{{ project.msg_total }}</p>
+          <p class="text-xs text-[#6e6e6e]">Message{{ project.msg_total|pluralize }}</p>
+        </div>
+        <div role="listitem" class="flex-1 min-w-[8rem] bg-white border border-[#e5e5e5] rounded-2xl px-4 py-3">
+          <p class="text-xl font-semibold">{% if project.last_activity %}{{ project.last_activity|date:"d/m" }}{% else %}—{% endif %}</p>
+          <p class="text-xs text-[#6e6e6e]">Dernière activité{% if project.last_activity %} ({{ project.last_activity|date:"H:i" }}){% endif %}</p>
+        </div>
+      </div>
+
+      {# Carte instructions #}
+      <section aria-labelledby="titre-instructions" class="bg-white border border-[#e5e5e5] rounded-2xl p-4 text-[0.8125rem]">
+        <h2 id="titre-instructions" class="text-[0.9375rem] font-semibold">Instructions</h2>
+        <p class="text-xs text-[#6e6e6e] mt-0.5 mb-3">Injectées en system prompt dans chaque conversation du projet.</p>
+        <form method="post" action="{% url 'chat:project_update' project.pk %}" class="space-y-3">
+          {% csrf_token %}
+          <label class="block">Nom<input name="name" maxlength="160" required value="{{ project.name }}" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2"></label>
+          <div>
+            <label for="project-instructions" class="block">Instructions</label>
+            <textarea id="project-instructions" name="instructions" rows="4" placeholder="Ex. Tu es un expert SIGB, réponds toujours en français avec des exemples." class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2">{{ project.instructions }}</textarea>
+            <p class="text-xs text-[#6e6e6e] mt-1">{{ project.instructions|length }} caractère{{ project.instructions|length|pluralize }}</p>
+          </div>
+          {% if has_instructions %}
+          <details class="rounded-lg bg-[#f4f4f4] px-3 py-2">
+            <summary class="cursor-pointer text-xs font-medium text-[#424242]">Aperçu de ce qui est injecté</summary>
+            <p class="mt-2 text-xs text-[#424242] whitespace-pre-wrap">Contexte projet {{ project.name }} : {{ project.instructions|striptags }}</p>
+          </details>
+          {% endif %}
+          <div class="flex flex-wrap gap-2">
+            <button class="px-4 py-2 rounded-lg bg-ink text-white">Enregistrer</button>
+          </div>
+        </form>
+      </section>
+
+      {# Conversations #}
+      <h2 class="text-[0.9375rem] font-semibold mt-6 mb-2">Conversations ({{ project.conv_count }})</h2>
+      {% for c in project.conversations.all %}
+      <a href="{% url 'chat:detail' c.pk %}" class="block bg-white border border-[#e5e5e5] rounded-2xl px-4 py-2.5 mb-2 text-[0.8125rem] hover:border-[#b5b5b5]" title="{{ c.title }}">
+        <span class="flex items-center gap-2">
+          <span class="flex-1 truncate font-medium">{{ c.title }}</span>
+          {% if c.model_id %}<span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#f4f4f4] text-[#424242] truncate max-w-[12rem]">{{ c.model_id }}</span>{% endif %}
+        </span>
+        <span class="flex items-center gap-2 mt-0.5 text-xs text-[#6e6e6e]">
+          <span>{{ c.msg_count }} message{{ c.msg_count|pluralize }}</span>
+          <span aria-hidden="true">·</span>
+          <span>{{ c.updated_at|date:"d/m H:i" }}</span>
+        </span>
+      </a>
       {% empty %}
-      <p class="text-[0.8125rem] text-[#6e6e6e] mb-4">Aucune conversation dans ce projet.</p>
+      <div class="bg-white border border-dashed border-[#b5b5b5] rounded-2xl px-4 py-5 mb-2 text-center">
+        <p class="text-[0.8125rem] text-[#6e6e6e] mb-3">Aucune conversation dans ce projet pour l'instant.</p>
+        <form method="post" action="{% url 'chat:conversation_create' %}" class="inline">
+          {% csrf_token %}
+          <input type="hidden" name="project_id" value="{{ project.pk }}">
+          <button class="px-4 py-2 rounded-lg bg-ink text-white text-[0.8125rem]">+ Créer la première conversation</button>
+        </form>
+      </div>
       {% endfor %}
+      {% if project.conv_count %}
       <form method="post" action="{% url 'chat:conversation_create' %}" class="inline">
         {% csrf_token %}
         <input type="hidden" name="project_id" value="{{ project.pk }}">
         <button class="mt-1 px-4 py-2 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] text-[0.8125rem]">+ Nouvelle conversation dans ce projet</button>
       </form>
+      {% endif %}
 
-      <form method="post" action="{% url 'chat:project_delete' project.pk %}" class="mt-6" onsubmit="return confirm('Supprimer le projet « {{ project.name|escapejs }} » ? Les conversations seront conservées.')">
-        {% csrf_token %}
-        <button class="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Supprimer le projet…</button>
-      </form>
+      {# Zone danger #}
+      <section aria-labelledby="titre-danger" class="mt-6 border border-red-200 rounded-2xl p-4 text-[0.8125rem]">
+        <h2 id="titre-danger" class="text-[0.9375rem] font-semibold text-red-700">Zone danger</h2>
+        <p class="text-xs text-[#6e6e6e] mt-0.5 mb-2">La suppression du projet est définitive. Les conversations seront conservées.</p>
+        <form method="post" action="{% url 'chat:project_delete' project.pk %}" onsubmit="return confirm('Supprimer le projet « {{ project.name|escapejs }} » ? Les conversations seront conservées.')">
+          {% csrf_token %}
+          <button class="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Supprimer le projet…</button>
+        </form>
+        <p class="text-xs text-[#6e6e6e] mt-4 mb-2">La suppression des conversations est définitive et irréversible. Le projet et ses instructions sont conservés.</p>
+        <form method="post" action="{% url 'chat:project_conversations_delete' project.pk %}" onsubmit="return confirm('Supprimer définitivement les {{ project.conv_count }} conversation(s) du projet « {{ project.name|escapejs }} » ? Cette action est irréversible.')">
+          {% csrf_token %}
+          <button {% if not project.conv_count %}disabled aria-disabled="true"{% endif %} class="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 {% if not project.conv_count %}opacity-50 cursor-not-allowed hover:bg-red-600{% endif %}">Supprimer les {{ project.conv_count }} conversation(s)…</button>
+        </form>
+      </section>
+      </div>
     </div>
   </main>
 </div>

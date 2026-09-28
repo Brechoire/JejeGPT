@@ -26,9 +26,9 @@
 
     {% if has_messages %}
     <!-- ----- État thread ----- -->
-    <div class="flex items-center gap-2 px-4 sm:px-6 pb-2 w-full max-w-3xl mx-auto">
+    <div class="flex items-center gap-2 px-4 sm:px-6 pb-2 w-full max-w-5xl mx-auto">
       {% include "chat/partials/model_picker.html" %}
-      <h1 class="text-[0.8125rem] text-[#6e6e6e] truncate flex-1 text-right">{{ conversation.title }}</h1>
+      <h1 class="text-[0.8125rem] text-[#6e6e6e] truncate flex-1 text-right">{% if conversation.assistant %}🤖 {{ conversation.assistant.name }} · {% endif %}{{ conversation.title }}</h1>
       <div class="relative">
         <button @click="showSettings = !showSettings" class="p-1.5 rounded-lg hover:bg-[#f4f4f4] text-[#424242]" title="Réglages">⚙️</button>
         <form method="post" action="{% url 'chat:conversation_update' conversation.pk %}" x-show="showSettings" @click.outside="showSettings = false" class="absolute right-0 mt-1 w-72 p-3 rounded-xl bg-white border border-[#e5e5e5] shadow-xl space-y-2 text-xs z-20">
@@ -47,7 +47,7 @@
           <button class="w-full py-1.5 rounded-lg bg-ink text-white">Appliquer</button>
         </form>
       </div>
-      <form method="post" action="{% url 'chat:message_regenerate' conversation.pk %}" hx-post="{% url 'chat:message_regenerate' conversation.pk %}" hx-target="#thread" hx-swap="innerHTML">
+      <form method="post" action="{% url 'chat:message_regenerate' conversation.pk %}" hx-post="{% url 'chat:message_regenerate' conversation.pk %}" hx-target="#thread" hx-swap="innerHTML" hx-indicator="#regen-indicator" hx-disabled-elt="find button">
         {% csrf_token %}
         <button class="text-xs border border-[#e5e5e5] rounded-lg px-2 py-1 hover:bg-white" title="Régénérer la dernière réponse">↻</button>
       </form>
@@ -83,6 +83,16 @@
     </script>
     {% endif %}
 
+    <div id="regen-indicator" class="htmx-indicator w-full max-w-5xl mx-auto px-4 sm:px-6 pb-1">
+      <div class="text-xs px-3 py-1.5 rounded-lg bg-[#f4f4f4] text-[#424242] inline-block">⏳ Régénération en cours…</div>
+    </div>
+    {% if flash_messages %}
+    <div class="w-full max-w-5xl mx-auto px-4 sm:px-6 pb-1 space-y-2">
+      {% for message in flash_messages %}
+      <div class="p-3 rounded-xl border text-[0.8125rem] {% if message.tags == 'error' %}bg-red-50 border-red-200 text-red-700{% else %}bg-green-50 border-green-200 text-green-800{% endif %}">{{ message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
     <div id="thread" class="flex-1 overflow-y-auto" {% if not has_messages %}x-show="heroStreaming"{% endif %} @scroll="followOutput = ($el.scrollHeight - $el.scrollTop - $el.clientHeight) <= 150">
       {% if has_messages %}{% include "chat/partials/thread.html" %}{% endif %}
     </div>
@@ -91,17 +101,17 @@
     </div>
 
     {% if has_messages %}
-    <div class="w-full max-w-3xl mx-auto px-4 sm:px-6 pb-5">
+    <div class="w-full max-w-5xl mx-auto px-4 sm:px-6 pb-5">
       <form method="post" action="{% url 'chat:message_send' conversation.pk %}" @submit.prevent="sendStream($el, false)" class="composer p-2 pl-3">
         {% csrf_token %}
         <textarea name="content" rows="1" required placeholder="Tapez / pour un accès rapide" x-init="autogrow($el)" @input="autogrow($el)" @keydown.enter.exact.prevent="$el.form.requestSubmit()" class="w-full min-w-0 px-1 py-2"></textarea>
         <div class="composer-bar flex items-center gap-1">
-          <button type="button" class="shrink-0 p-2 rounded-full hover:bg-[#f4f4f4] text-ink" title="Pièces jointes (bientôt)">
+          <button type="button" class="shrink-0 p-1.5 rounded-full hover:bg-[#f4f4f4] text-ink" title="Pièces jointes (bientôt)">
             <svg width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           </button>
           {% include "chat/partials/composer_options.html" %}
           <span class="flex-1"></span>
-          <button class="shrink-0 w-9 h-9 rounded-full bg-ink text-white flex items-center justify-center" title="Envoyer">
+          <button class="shrink-0 w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center" title="Envoyer">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 12V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </div>
@@ -126,6 +136,12 @@
       <div class="w-full max-w-2xl">
         <svg width="44" height="44" viewBox="0 0 26 26" aria-hidden="true" class="mb-4"><rect x="1" y="1" width="7" height="7" fill="#ff4d00"/><rect x="9.5" y="1" width="7" height="7" fill="#ff4d00"/><rect x="1" y="9.5" width="7" height="7" fill="#ff4d00"/><rect x="9.5" y="9.5" width="7" height="7" fill="#ff4d00"/><rect x="18" y="9.5" width="7" height="16" fill="#ff4d00"/><rect x="1" y="18" width="16" height="7" fill="#ff4d00"/></svg>
         <h1 class="text-3xl sm:text-[2.25rem] leading-tight font-medium tracking-tight mb-6">Bonjour, on construit quoi ?</h1>
+        {% if conversation.assistant %}
+        <div class="mb-3 px-3.5 py-2.5 rounded-2xl bg-white border border-[#e5e5e5] text-sm">
+          <span class="font-medium">🤖 {{ conversation.assistant.name }}</span>
+          {% if conversation.assistant.description %}<span class="text-[#6e6e6e]"> — {{ conversation.assistant.description }}</span>{% endif %}
+        </div>
+        {% endif %}
         <div class="mb-2">
           {% include "chat/partials/model_picker.html" %}
         </div>
@@ -133,18 +149,26 @@
           {% csrf_token %}
           <textarea name="content" rows="1" required placeholder="Tapez / pour un accès rapide" x-ref="heroInput" x-init="autogrow($el)" @input="autogrow($el)" @keydown.enter.exact.prevent="$el.form.requestSubmit()" class="w-full min-w-0 px-1 py-2"></textarea>
           <div class="composer-bar flex items-center gap-1">
-            <button type="button" class="shrink-0 p-2 rounded-full hover:bg-[#f4f4f4]" title="Pièces jointes (bientôt)">
+            <button type="button" class="shrink-0 p-1.5 rounded-full hover:bg-[#f4f4f4]" title="Pièces jointes (bientôt)">
               <svg width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             </button>
             {% include "chat/partials/composer_options.html" %}
             <span class="flex-1"></span>
-            <button class="shrink-0 w-9 h-9 rounded-full bg-ink text-white flex items-center justify-center" title="Envoyer">
+            <button class="shrink-0 w-8 h-8 rounded-full bg-ink text-white flex items-center justify-center" title="Envoyer">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 12V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
         </form>
         <div x-show="heroError" class="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[0.8125rem]" x-text="heroError"></div>
         <div class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-sm">
+          {% if assistant_starters %}
+          {% for s in assistant_starters %}
+          <button @click="$refs.heroInput.value = '{{ s|escapejs }}'; autogrow($refs.heroInput); $refs.heroInput.focus()" class="flex items-start gap-2.5 p-3.5 rounded-2xl bg-white border border-[#e5e5e5] hover:shadow-md text-left transition-shadow">
+            <span aria-hidden="true" class="shrink-0 mt-0.5 text-accent">▶</span>
+            <span class="text-[0.8125rem]">{{ s }}</span>
+          </button>
+          {% endfor %}
+          {% endif %}
           <button @click="$refs.heroInput.value = 'Quelles sont les nouveautés de JejeGPT ?'; autogrow($refs.heroInput); $refs.heroInput.focus()" class="flex items-start gap-2.5 p-3.5 rounded-2xl bg-white border border-[#e5e5e5] hover:shadow-md text-left transition-shadow">
             <svg width="17" height="17" viewBox="0 0 16 16" fill="none" class="shrink-0 mt-0.5 text-accent"><path d="M8 1l1.8 4.2L14 7l-4.2 1.8L8 13l-1.8-4.2L2 7l4.2-1.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
             <span><span class="font-medium">Nouveautés</span><br><span class="text-[#6e6e6e] text-[0.8125rem]">Découvrir JejeGPT</span></span>
@@ -207,7 +231,7 @@ function chatApp() {
         if (!thread) {
           thread = document.createElement('div');
           thread.id = 'thread-live';
-          thread.className = 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-2 space-y-8';
+          thread.className = 'w-full max-w-5xl mx-auto px-4 sm:px-6 py-2 space-y-8';
           document.getElementById('thread').appendChild(thread);
         }
       }
