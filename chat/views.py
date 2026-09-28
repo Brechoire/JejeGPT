@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 def _history(conv: Conversation) -> list[dict]:
     from .memory import memory_context, project_context
+    from .scores import score_extra_message
 
     msgs: list[dict] = []
     system = "\n\n".join(
@@ -46,6 +48,13 @@ def _history(conv: Conversation) -> list[dict]:
     for m in conv.messages.all():
         if m.role in ("user", "assistant") and m.content:
             msgs.append({"role": m.role, "content": m.content})
+    # Partition intelligente : la dernière question parle-t-elle musique ?
+    # Message stocké inchangé, consigne ABC ajoutée à l'appel LLM seul.
+    for m in reversed(msgs):
+        if m["role"] == "user":
+            if (extra := score_extra_message(m["content"])) is not None:
+                msgs.append(extra)
+            break
     return msgs
 
 
@@ -547,6 +556,58 @@ def assistant_start_conversation(request: HttpRequest, pk: int) -> HttpResponse:
         assistant=assistant,
     )
     return redirect("chat:detail", pk=conv.pk)
+
+
+def score_demo(request: HttpRequest) -> HttpResponse:
+    """Vitrine partition intelligente : 3 exemples rendus par le viewer JS."""
+    from .scores import SCORE_DEMOS
+
+    conv = Conversation.objects.first()
+    if conv is not None:
+        ctx = _sidebar_ctx(conv)
+    else:
+        ctx = {
+            "recent_convs": [], "older_convs": [], "active_project_id": None,
+            "projects": list(Project.objects.annotate(conv_count=models.Count("conversations"))),
+            "assistants": list(Assistant.objects.annotate(conv_count=models.Count("conversations"))),
+        }
+    ctx.update({"conversation": conv, "demos": SCORE_DEMOS})
+    return render(request, "chat/score_demo.html", ctx)
+
+
+@require_POST
+def score_events(request: HttpRequest) -> JsonResponse:
+    """Événements jouables d'un bloc ABC (audio Tone.js + mode débutant)."""
+    from .scores import abc_to_events
+
+    try:
+        return JsonResponse(abc_to_events(request.POST.get("abc") or ""))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@require_POST
+def score_musicxml(request: HttpRequest) -> HttpResponse:
+    """Téléchargement MusicXML généré depuis un bloc ABC."""
+    import io
+    import unicodedata
+
+    from .scores import abc_to_musicxml
+
+    try:
+        xml = abc_to_musicxml(request.POST.get("abc") or "", request.POST.get("title") or "")
+    except ValueError as exc:
+        return HttpResponse(str(exc), status=400)
+    ascii_ = "".join(
+        c for c in unicodedata.normalize("NFD", request.POST.get("title") or "partition")
+        if unicodedata.category(c) != "Mn"
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_.lower()).strip("-") or "partition"
+    return FileResponse(
+        io.BytesIO(xml.encode("utf-8")), as_attachment=True,
+        filename=f"{slug}.musicxml",
+        content_type="application/vnd.recordare.musicxml+xml",
+    )
 
 
 @require_POST
@@ -1765,8 +1826,12 @@ def message_stream(request: HttpRequest, pk: int) -> StreamingHttpResponse:
 
     hist = _history(conv)
     if prompt and not any(m["role"] == "user" and m["content"] == prompt for m in hist):
+        from .scores import score_extra_message
+
         Message.objects.create(conversation=conv, role="user", content=prompt)
         hist.append({"role": "user", "content": prompt})
+        if (extra := score_extra_message(prompt)) is not None:
+            hist.append(extra)
 
     def gen():
         full: list[str] = []

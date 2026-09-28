@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Démo partition — JejeGPT{% endblock %}
+{% block body %}
+<div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
+  {% include "chat/partials/sidebar.html" %}
+  <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 z-30 bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="px-4 sm:px-8 pt-5 pb-3">
+      <div class="w-full max-w-3xl mx-auto">
+        {% if conversation %}
+        <a href="{% url 'chat:detail' conversation.pk %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Retour au chat</a>
+        {% else %}
+        <a href="{% url 'chat:index' %}" class="text-[0.8125rem] text-[#6e6e6e] hover:text-ink shrink-0">← Retour au chat</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <div class="px-4 sm:px-8 pb-10 w-full max-w-3xl mx-auto">
+        <h1 class="text-[1.25rem] font-semibold">Partition intelligente — démo</h1>
+        <p class="text-xs text-[#6e6e6e] mt-0.5 mb-4">
+          Dans n'importe quel chat, tapez <code>/partition Frère Jacques en Do</code> ou demandez
+          une partition en toutes lettres : le bloc <code>abc</code> de la réponse devient une
+          portée jouable. Exemples valides ci-dessous.
+        </p>
+        {% for d in demos %}
+        <section aria-label="Exemple {{ d.title }}" class="mb-6">
+          <h2 class="text-[0.9375rem] font-semibold mb-2">{{ d.title }}</h2>
+          <pre><code class="language-abc">{{ d.abc }}</code></pre>
+        </section>
+        {% endfor %}
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}
