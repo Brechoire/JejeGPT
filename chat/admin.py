@@ -30,7 +30,7 @@ class LLMModelAdmin(admin.ModelAdmin):
 class MessageInline(admin.TabularInline):
     model = Message
     extra = 0
-    readonly_fields = ("role", "content", "error", "created_at")
+    readonly_fields = ("role", "content", "reasoning", "error", "created_at")
 
 
 @admin.register(Conversation)
@@ -42,8 +42,8 @@ class ConversationAdmin(admin.ModelAdmin):
 
 @admin.register(Assistant)
 class AssistantAdmin(admin.ModelAdmin):
-    list_display = ("name", "temperature", "web_search", "updated_at")
-    list_filter = ("web_search",)
+    list_display = ("name", "provider", "model_id", "temperature", "web_search", "updated_at")
+    list_filter = ("web_search", "provider")
 
 
 @admin.register(AppSettings)

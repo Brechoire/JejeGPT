@@ -315,21 +315,6 @@ html, body {
   position: relative;
 }
 
-/* Curseur de frappe pendant le stream */
-.typing-caret {
-  display: inline-block;
-  width: 0.5625rem;
-  height: 1.1em;
-  vertical-align: text-bottom;
-  background: var(--ink);
-  border-radius: 2px;
-  margin-left: 2px;
-  animation: caret-blink 1s steps(2, start) infinite;
-}
-@keyframes caret-blink {
-  to { visibility: hidden; }
-}
-
 /* Items sidebar */
 .conv-item {
   border-radius: 0.55rem;
@@ -508,4 +493,91 @@ html, body {
   border-radius: 0.75rem;
   padding: 0.625rem 0.875rem;
   margin: 0.5rem 0;
+}
+
+/* Chargement stream : shimmer moderne (remplace le texte brut + caret) */
+.stream-shimmer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  width: 100%;
+}
+.stream-shimmer span {
+  height: 0.9rem;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #ececec 25%, #f7f7f7 50%, #ececec 25%);
+  background-size: 200% 100%;
+  animation: stream-shimmer-slide 1.2s linear infinite;
+}
+.stream-shimmer span:nth-child(1) { width: 92%; }
+.stream-shimmer span:nth-child(2) { width: 68%; }
+.stream-shimmer span:nth-child(3) { width: 52%; }
+@keyframes stream-shimmer-slide {
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-shimmer span { animation: none; }
+}
+
+/* Bulles sources : avatars-lettre chevauchants, tooltip centré = nom du site */
+.src-group {
+  display: flex;
+  align-items: center;
+  margin: 0.375rem 0 0.25rem;
+}
+.src-group > * + * {
+  margin-left: -0.5rem;
+}
+.src-bubble {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(13, 13, 13, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+  position: relative;
+}
+a.src-bubble:hover {
+  z-index: 10;
+}
+.src-bubble.src-more {
+  font-size: 0.6875rem;
+}
+.src-bubble::after {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
+.src-b0 { background: #dbeafe; color: #1e40af; }
+.src-b1 { background: #dcfce7; color: #166534; }
+.src-b2 { background: #fef3c7; color: #92400e; }
+.src-b3 { background: #fce7f3; color: #9d174d; }
+.src-b4 { background: #e0e7ff; color: #3730a3; }
+.src-b5 { background: #ffedd5; color: #9a3412; }
+.src-b6 { background: #cffafe; color: #155e75; }
+.src-b7 { background: #ede9fe; color: #5b21b6; }
+
+/* Réflexion du modèle (thinking) : discrète, repliable */
+.reasoning,
+.reasoning-live {
+  font-size: 0.8125rem;
+  color: #6e6e6e;
+  background: #f4f4f4;
+  border-radius: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.reasoning summary,
+.reasoning-live summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.reasoning-live {
+  width: 100%;
 }

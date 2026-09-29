@@ -25,6 +25,12 @@ def _default_llm():
     return provider
 
 
+def _provider_with_model(name, model):
+    provider = Provider.objects.create(name=name, base_url="http://localhost:9/v1")
+    LLMModel.objects.create(provider=provider, model_id=model, display_name=model)
+    return provider
+
+
 def _assistant(**kwargs):
     global _SEQ
     _SEQ += 1
@@ -213,3 +219,88 @@ def test_sidebar_onglets_chat_assistants_sans_work_code():
     # Onglet actif côté assistants.
     html2 = Client().get(reverse("chat:assistant_list")).content.decode()
     assert '<a href="/assistants/" class="flex-1 py-1.5 text-center active" aria-current="page">Assistants</a>' in html2
+
+
+# ---------------- LLM par assistant ----------------
+
+def _pinned_assistant(client, pin, name="Pinné"):
+    resp = client.post(reverse("chat:assistant_create"), {
+        "name": name, "instructions": "Base.", "temperature": "0.7",
+        "provider_id": str(pin.pk), "model_id": "pin-m",
+    })
+    assert resp.status_code == 302
+    return Assistant.objects.get(name=name)
+
+
+def test_create_et_start_avec_llm_fige():
+    _default_llm()
+    pin = _provider_with_model("PinP", "pin-m")
+    client = Client()
+    a = _pinned_assistant(client, pin)
+    assert (a.provider_id, a.model_id) == (pin.pk, "pin-m")
+    client.post(reverse("chat:assistant_start_conversation", args=[a.pk]))
+    conv = Conversation.objects.get()
+    assert (conv.provider_id, conv.model_id) == (pin.pk, "pin-m")
+
+
+def test_start_replie_sur_defaut_si_fige_invalide():
+    _default_llm()
+    pin = _provider_with_model("PinP", "pin-m")
+    client = Client()
+    a = _pinned_assistant(client, pin)
+    pin.is_active = False
+    pin.save(update_fields=["is_active"])
+    client.post(reverse("chat:assistant_start_conversation", args=[a.pk]))
+    assert Conversation.objects.get().model_id == "def-m"  # provider désactivé
+    pin.is_active = True
+    pin.save(update_fields=["is_active"])
+    pin.cached_models.all().delete()
+    client.post(reverse("chat:assistant_start_conversation", args=[a.pk]))
+    assert Conversation.objects.last().model_id == "def-m"  # modèle plus en cache
+
+
+def test_create_llm_invalide_refuse():
+    _default_llm()
+    pin = _provider_with_model("PinP", "pin-m")
+    client = Client()
+    avant = Assistant.objects.count()
+    client.post(reverse("chat:assistant_create"), {"name": "Bad", "provider_id": "9999", "model_id": "x"})
+    client.post(reverse("chat:assistant_create"), {
+        "name": "Bad2", "provider_id": str(pin.pk), "model_id": "inconnu",
+    })
+    assert Assistant.objects.count() == avant
+
+
+def test_update_change_et_reinitialise_le_llm():
+    _default_llm()
+    pin = _provider_with_model("PinP", "pin-m")
+    client = Client()
+    a = _assistant(name="Change")
+    client.post(reverse("chat:assistant_update", args=[a.pk]), {
+        "name": "Change", "temperature": "0.7",
+        "provider_id": str(pin.pk), "model_id": "pin-m",
+    })
+    a.refresh_from_db()
+    assert (a.provider_id, a.model_id) == (pin.pk, "pin-m")
+    client.post(reverse("chat:assistant_update", args=[a.pk]), {
+        "name": "Change", "temperature": "0.7", "provider_id": "", "model_id": "",
+    })
+    a.refresh_from_db()
+    assert (a.provider_id, a.model_id) == (None, "")
+    client.post(reverse("chat:assistant_start_conversation", args=[a.pk]))
+    assert Conversation.objects.get().model_id == "def-m"
+
+
+def test_detail_affiche_llm_fige_ou_defaut():
+    _default_llm()
+    pin = _provider_with_model("PinP", "pin-m")
+    a = Assistant.objects.create(
+        name="Figé", provider=pin, model_id="pin-m", temperature=0.7,
+    )
+    html = Client().get(reverse("chat:assistant_detail", args=[a.pk])).content.decode()
+    assert "Modèle figé" in html and "pin-m" in html
+    assert '<select name="model_id"' in html  # liste du cache, pas de champ libre
+    assert 'data-provider="%s"' % pin.pk in html
+    b = _assistant(name="Libre")
+    html2 = Client().get(reverse("chat:assistant_detail", args=[b.pk])).content.decode()
+    assert "Modèle par défaut" in html2

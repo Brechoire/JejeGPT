@@ -2,6 +2,7 @@
 import html as html_lib
 import re
 import unicodedata
+from urllib.parse import urlparse
 
 import bleach
 import markdown
@@ -14,7 +15,7 @@ ALLOWED_TAGS = [
 ]
 ALLOWED_ATTRS = {
     **bleach.sanitizer.ALLOWED_ATTRIBUTES,
-    "a": ["href", "title", "target", "rel"],
+    "a": ["href", "title", "target", "rel", "data-tip", "aria-label"],
     "code": ["class"],
     "pre": ["class"],
     "img": ["src", "alt", "title", "loading", "width", "height", "referrerpolicy"],
@@ -196,21 +197,74 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\x00(\d+)\x00", _restore, text)
 
 
-_RE_EXTERNAL_LINK = re.compile(r"<a\s[^>]*href=\"https?://", re.IGNORECASE)
+_RE_ANCHOR = re.compile(
+    r"<a\s[^>]*href=\"(https?://[^\"]+)\"[^>]*>(.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+_RE_TAG = re.compile(r"<[^>]+>")
+_ARTICLES_RE = re.compile(r"^(?:le|la|les|l'|de|des|du|d'|the)\s+", re.IGNORECASE)
+_SRC_MAX = 10
+_SRC_COLORS = 8
+
+
+def _site_bubbles(anchors: list[tuple[str, str]]) -> list[dict]:
+    """Déduplique par domaine : une bulle par site (lettre + nom + url)."""
+    seen: dict[str, dict] = {}
+    for url, text in anchors:
+        host = (urlparse(url).hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if not host:
+            continue
+        label = _RE_TAG.sub("", html_lib.unescape(text)).strip()
+        if not label or re.match(r"^https?://", label):
+            label = host
+        if host in seen:
+            continue
+        letter = "•"
+        short = _ARTICLES_RE.sub("", label).strip()
+        for char in short:
+            if char.isalnum():
+                letter = char.upper()
+                break
+        seen[host] = {
+            "url": url, "label": label, "letter": letter,
+            "color": sum(ord(c) for c in host) % _SRC_COLORS,
+        }
+    return list(seen.values())
+
+
+def _bubbles_html(sites: list[dict]) -> str:
+    """Groupe d'avatars-lettre chevauchants, tooltip = nom du site."""
+    shown, extra = sites[:_SRC_MAX], len(sites) - _SRC_MAX
+    parts = [
+        f"<a class=\"src-bubble src-b{s['color']}\" href=\"{html_lib.escape(s['url'], quote=True)}\" "
+        f"target=\"_blank\" rel=\"noopener noreferrer nofollow\" "
+        f"data-tip=\"{html_lib.escape(s['label'], quote=True)}\" "
+        f"aria-label=\"Source : {html_lib.escape(s['label'], quote=True)}\" "
+        f"title=\"{html_lib.escape(s['label'], quote=True)}\">{html_lib.escape(s['letter'])}</a>"
+        for s in shown
+    ]
+    if extra > 0:
+        parts.append(f"<span class=\"src-bubble src-more\" title=\"{extra} autres sources\">+{extra}</span>")
+    return "<div class=\"src-group\" aria-label=\"Sources\">" + "".join(parts) + "</div>"
 
 
 def _append_sources_footer(html: str) -> str:
-    """Pied discret 'Sources : n lien(s)' si la réponse contient des liens externes.
+    """Pied discret 'Sources : n lien(s)' + bulles-lettre par site (tooltip = nom).
 
     Compté au rendu (pas en base) ; les liens déjà visibles restent inchangés.
     """
     if not html:
         return html
-    count = len(_RE_EXTERNAL_LINK.findall(html))
-    if not count:
+    anchors = _RE_ANCHOR.findall(html)
+    if not anchors:
         return html
+    count = len(anchors)
+    sites = _site_bubbles(anchors)
     return html + (
         f"<p class=\"sources-note\">Sources : {count} lien{'s' if count > 1 else ''}</p>"
+        + _bubbles_html(sites)
     )
 
 

@@ -86,6 +86,11 @@ class Assistant(models.Model):
     name = models.CharField(max_length=160, unique=True)
     description = models.CharField(max_length=300, blank=True, default="")
     instructions = models.TextField(blank=True, default="")
+    # LLM figé (provider actif + modèle en cache) ou vide = modèle par défaut.
+    provider = models.ForeignKey(
+        Provider, null=True, blank=True, on_delete=models.SET_NULL, related_name="assistants"
+    )
+    model_id = models.CharField(max_length=300, blank=True, default="")
     temperature = models.FloatField(default=0.7)
     reasoning_effort = models.CharField(max_length=10, blank=True, default="")
     web_search = models.BooleanField(default=False)
@@ -157,6 +162,8 @@ class Message(models.Model):
     )
     role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     content = models.TextField(blank=True, default="")
+    # Raisonnement du modèle (affichage seul : jamais réinjecté dans l'historique).
+    reasoning = models.TextField(blank=True, default="")
     error = models.TextField(blank=True, default="")
     feedback = models.CharField(
         max_length=4, blank=True, default="",

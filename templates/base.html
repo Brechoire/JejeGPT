@@ -29,6 +29,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/abcjs@6.4.4/dist/abcjs-basic-min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@18.0.14/lib/marked.umd.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"></script>
   {% load static %}
   <link rel="stylesheet" href="{% static 'css/jejegpt.css' %}">
   <script defer src="{% static 'js/score-viewer.js' %}"></script>
@@ -195,6 +197,38 @@
       setInterval(refreshBadge, 15000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBadge(); });
     })();
+    // Paires provider/modèle des formulaires assistants : le select modèle
+    // ne propose que les modèles en cache du provider choisi ; choisir un
+    // modèle positionne son provider. État initial appliqué au chargement.
+    function assistantPair(sel) {
+      var pair = sel.closest('[data-llm-pair]');
+      if (!pair) return null;
+      return {
+        provider: pair.querySelector('select[name=provider_id]'),
+        model: pair.querySelector('select[name=model_id]'),
+      };
+    }
+    function assistantProviderChanged(sel) {
+      var pair = assistantPair(sel);
+      if (!pair) return;
+      var pid = pair.provider.value;
+      Array.prototype.forEach.call(pair.model.options, function(o) {
+        if (!o.value) return;
+        o.hidden = !!pid && o.dataset.provider !== pid;
+      });
+      var cur = pair.model.selectedOptions.length ? pair.model.selectedOptions[0] : null;
+      if (cur && cur.hidden) pair.model.value = '';
+    }
+    function assistantModelChanged(sel) {
+      var pair = assistantPair(sel);
+      if (!pair) return;
+      var cur = pair.model.selectedOptions.length ? pair.model.selectedOptions[0] : null;
+      if (cur && cur.value && cur.dataset.provider) pair.provider.value = cur.dataset.provider;
+      assistantProviderChanged(pair.provider);
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('[data-llm-pair] select[name=provider_id]').forEach(assistantProviderChanged);
+    });
     // Filtre local de la sidebar (projets + conversations) : 100 % client,
     // sans endpoint. Insensible à la casse et aux accents. Réappliqué
     // après chaque swap HTMX de la liste des conversations.

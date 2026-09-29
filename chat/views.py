@@ -237,6 +237,31 @@ def _resolve_default_llm() -> tuple[Provider | None, str]:
     return first_provider, first_model
 
 
+def _assistant_llm(assistant: Assistant) -> tuple[Provider | None, str]:
+    """LLM d'un assistant : figé si encore valide (actif + en cache), sinon défaut."""
+    provider = assistant.provider
+    if (
+        provider is not None and provider.is_active and assistant.model_id
+        and provider.cached_models.filter(model_id=assistant.model_id).exists()
+    ):
+        return provider, assistant.model_id
+    return _resolve_default_llm()
+
+
+def _assistant_llm_ctx() -> dict:
+    """Providers actifs + défaut global, pour les selects LLM des formulaires."""
+    defaults = AppSettings.get_solo()
+    return {
+        "llm_providers": list(
+            Provider.objects.filter(is_active=True).prefetch_related("cached_models")
+        ),
+        "llm_default": (
+            f"{defaults.default_provider.name} / {defaults.default_model_id}"
+            if defaults.default_valid() else ""
+        ),
+    }
+
+
 @require_POST
 def conversation_create(request: HttpRequest) -> HttpResponse:
     first_provider, first_model = _resolve_default_llm()
@@ -416,11 +441,12 @@ def project_conversations_delete(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("chat:project_detail", pk=pk)
 
 
-def _parse_assistant_data(request: HttpRequest) -> dict | None:
-    """Valide un assistant : nom requis, température bornée, effort connu, 4 starters max."""
+def _parse_assistant_data(request: HttpRequest) -> tuple[dict | None, str]:
+    """Valide un assistant : (data, erreur). Nom requis, température bornée,
+    effort connu, 4 starters max, LLM figé valide ou défaut."""
     name = (request.POST.get("name") or "").strip()[:160]
     if not name:
-        return None
+        return None, "Nom d'assistant requis."
     try:
         temperature = max(0.0, min(2.0, float(request.POST.get("temperature", "0.7") or 0.7)))
     except (ValueError, TypeError):
@@ -428,16 +454,28 @@ def _parse_assistant_data(request: HttpRequest) -> dict | None:
     effort = (request.POST.get("reasoning_effort") or "").strip()
     if effort not in providers.EFFORT_LEVELS:
         effort = ""
+    provider = None
+    model_id = ""
+    if raw_provider := (request.POST.get("provider_id") or "").strip():
+        try:
+            provider = Provider.objects.get(pk=int(raw_provider), is_active=True)
+        except (Provider.DoesNotExist, ValueError, TypeError):
+            return None, "Provider invalide ou inactif."
+        model_id = (request.POST.get("model_id") or "").strip()[:300]
+        if not model_id or not provider.cached_models.filter(model_id=model_id).exists():
+            return None, "Modèle inconnu pour ce provider (Actualiser d'abord)."
     return {
         "name": name,
         "description": (request.POST.get("description") or "").strip()[:300],
         "instructions": (request.POST.get("instructions") or "").strip(),
+        "provider": provider,
+        "model_id": model_id,
         "temperature": temperature,
         "reasoning_effort": effort,
         "web_search": request.POST.get("web_search") in ("1", "true", "on"),
         "thinking_enabled": request.POST.get("thinking_enabled", "on") in ("1", "true", "on"),
         "starters": Assistant.normalize_starters(request.POST.get("starters") or ""),
-    }
+    }, ""
 
 
 def assistant_list(request: HttpRequest) -> HttpResponse:
@@ -454,6 +492,7 @@ def assistant_list(request: HttpRequest) -> HttpResponse:
         ),
         "sidebar_tab": "assistants",
         "effort_levels": providers.EFFORT_LEVELS,
+        **_assistant_llm_ctx(),
     })
     return render(request, "chat/assistant_list.html", ctx)
 
@@ -476,15 +515,16 @@ def assistant_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "sidebar_tab": "assistants",
         "assistant_conversations": list(assistant.conversations.all()[:20]),
         "effort_levels": providers.EFFORT_LEVELS,
+        **_assistant_llm_ctx(),
     })
     return render(request, "chat/assistant_detail.html", ctx)
 
 
 @require_POST
 def assistant_create(request: HttpRequest) -> HttpResponse:
-    data = _parse_assistant_data(request)
+    data, error = _parse_assistant_data(request)
     if data is None:
-        django_messages.error(request, "Nom d'assistant requis.")
+        django_messages.error(request, error)
         return redirect("chat:assistant_list")
     if Assistant.objects.filter(name=data["name"]).exists():
         django_messages.error(request, f"Un assistant « {data['name']} » existe déjà.")
@@ -497,9 +537,9 @@ def assistant_create(request: HttpRequest) -> HttpResponse:
 @require_POST
 def assistant_update(request: HttpRequest, pk: int) -> HttpResponse:
     assistant = get_object_or_404(Assistant, pk=pk)
-    data = _parse_assistant_data(request)
+    data, error = _parse_assistant_data(request)
     if data is None:
-        django_messages.error(request, "Nom d'assistant requis.")
+        django_messages.error(request, error)
         return redirect("chat:assistant_detail", pk=pk)
     if Assistant.objects.exclude(pk=pk).filter(name=data["name"]).exists():
         django_messages.error(request, f"Un assistant « {data['name']} » existe déjà.")
@@ -531,6 +571,7 @@ def assistant_duplicate(request: HttpRequest, pk: int) -> HttpResponse:
         suffix += 1
     copy = Assistant.objects.create(
         name=name, description=assistant.description, instructions=assistant.instructions,
+        provider=assistant.provider, model_id=assistant.model_id,
         temperature=assistant.temperature, reasoning_effort=assistant.reasoning_effort,
         web_search=assistant.web_search, thinking_enabled=assistant.thinking_enabled,
         starters=assistant.starters,
@@ -541,9 +582,9 @@ def assistant_duplicate(request: HttpRequest, pk: int) -> HttpResponse:
 
 @require_POST
 def assistant_start_conversation(request: HttpRequest, pk: int) -> HttpResponse:
-    """Démarre une conversation depuis un assistant (modèle par défaut)."""
+    """Démarre une conversation : LLM figé de l'assistant, sinon modèle par défaut."""
     assistant = get_object_or_404(Assistant, pk=pk)
-    provider, model_id = _resolve_default_llm()
+    provider, model_id = _assistant_llm(assistant)
     conv = Conversation.objects.create(
         title=assistant.name[:200],
         provider=provider,
@@ -1835,7 +1876,20 @@ def message_stream(request: HttpRequest, pk: int) -> StreamingHttpResponse:
 
     def gen():
         full: list[str] = []
+        reasoning_parts: list[str] = []
+        flushed = 0
         usage = providers._empty_usage()
+
+        def _flush_reasoning():
+            nonlocal flushed
+            while flushed < len(reasoning_parts):
+                import json as _j
+                yield f"event: reasoning\ndata: {_j.dumps({'token': reasoning_parts[flushed]})}\n\n"
+                flushed += 1
+
+        def _on_reasoning(text: str) -> None:
+            reasoning_parts.append(text)
+
         try:
             for tok in providers.chat_stream(
                 conv.provider, conv.model_id, hist,
@@ -1844,17 +1898,26 @@ def message_stream(request: HttpRequest, pk: int) -> StreamingHttpResponse:
                 route=providers.resolve_route(conv.provider, conv.model_id),
                 options=_conv_options(conv),
                 usage_collector=usage,
+                reasoning_callback=_on_reasoning,
             ):
                 full.append(tok)
                 import json as _j
                 yield f"data: {_j.dumps({'token': tok})}\n\n"
+                yield from _flush_reasoning()
         except providers.ProviderError as exc:
             import json as _j
             yield f"event: error\ndata: {_j.dumps({'message': exc.message})}\n\n"
-            Message.objects.create(conversation=conv, role="assistant", content="".join(full), error=exc.message)
+            Message.objects.create(
+                conversation=conv, role="assistant", content="".join(full),
+                reasoning="".join(reasoning_parts), error=exc.message,
+            )
             _record_usage(conv, usage, success=False, error=exc.message)
         else:
-            Message.objects.create(conversation=conv, role="assistant", content="".join(full))
+            yield from _flush_reasoning()
+            Message.objects.create(
+                conversation=conv, role="assistant", content="".join(full),
+                reasoning="".join(reasoning_parts),
+            )
             _record_usage(conv, usage, success=True)
             last_user = conv.messages.filter(role="user").last()
             user_text = prompt or (last_user.content if last_user else "")

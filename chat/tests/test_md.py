@@ -99,3 +99,35 @@ def test_mention_sans_url_reste_texte_seul():
     assert "sources-note" not in html
     code = render_markdown("Exemple `[Tartonpion](https://youtube.com/@tartonpion)` sans lien.")
     assert "<a " not in code
+
+
+def test_bulles_sources_lettre_et_tooltip():
+    html = render_markdown("Lire [Le Monde](https://www.lemonde.fr/article).")
+    assert 'class="src-group"' in html
+    assert ">M</a>" in html  # Le Monde → M (article ignoré)
+    assert 'data-tip="Le Monde"' in html  # tooltip = nom du site
+    assert 'target="_blank"' in html and 'rel="noopener noreferrer nofollow"' in html
+    assert "Sources : 1 lien</p>" in html  # compteur conservé
+
+
+def test_bulles_dedup_par_domaine_et_url_brute():
+    html = render_markdown(
+        "Voir [Le Monde](https://www.lemonde.fr/a), [Encore](https://lemonde.fr/b) "
+        "et https://example.com/x."
+    )
+    assert html.count("src-bubble src-b") == 2  # lemonde 2 fois → 1 bulle + example
+    assert ">E</a>" in html  # URL brute → lettre du domaine
+
+
+def test_bulles_plafond_et_overflow():
+    corps = ", ".join(f"[S{i}](https://site{i}.fr/x)" for i in range(12))
+    html = render_markdown(corps)
+    assert html.count("src-bubble src-b") == 10
+    assert ">+2</span>" in html
+
+
+def test_bulles_ignorent_javascript_et_absents_sans_lien():
+    html = render_markdown("Cliquez [x](javascript:alert(1)).")
+    assert "src-group" not in html
+    assert "javascript" not in html
+    assert "src-group" not in render_markdown("Juste du texte.")

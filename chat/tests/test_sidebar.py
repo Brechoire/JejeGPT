@@ -89,3 +89,18 @@ def test_bulle_et_prose_style_chatgpt():
     assert "font-size: 1.25rem" in css and "font-size: 1.125rem" in css  # h2/h3
     assert "font-size: 1rem" in css  # texte normal
     assert "border-radius: 28px" in css  # composer pilule
+
+
+def test_stream_live_markdown_et_shimmer():
+    from pathlib import Path
+
+    from django.conf import settings
+
+    conv = Conversation.objects.create(title="T")
+    html = Client().get(f"/{conv.pk}/").content.decode()
+    assert "marked@18.0.14/lib/marked.umd.js" in html
+    assert "dompurify@3.4.16/dist/purify.min.js" in html
+    css = (Path(settings.BASE_DIR) / "static" / "css" / "jejegpt.css").read_text(encoding="utf-8")
+    assert "stream-shimmer-slide" in css  # shimmer moderne
+    assert "typing-caret" not in css  # ancien curseur supprimé
+    assert "prefers-reduced-motion" in css  # shimmer respectueux

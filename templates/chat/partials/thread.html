@@ -36,6 +36,7 @@
   <div class="flex justify-start" id="msg-{{ item.obj.pk }}">
     <div class="w-full min-w-0">
       {% if item.obj.error %}<div class="text-red-600 text-[0.9375rem] mb-2">⚠️ {{ item.obj.error }}</div>{% endif %}
+      {% if item.obj.reasoning %}<details class="reasoning"><summary>Réflexion</summary><div class="whitespace-pre-wrap">{{ item.obj.reasoning }}</div></details>{% endif %}
       {% if item.html %}<div class="prose-jeje max-w-none">{{ item.html|safe }}</div>{% elif not item.obj.error %}<span class="text-[#b4b4b4]">…</span>{% endif %}
       <div class="mt-2 flex items-center gap-0.5">
         {% if item.obj.content %}

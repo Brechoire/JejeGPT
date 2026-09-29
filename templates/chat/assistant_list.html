@@ -52,6 +52,27 @@
                 </select>
               </label>
             </div>
+            <div class="grid grid-cols-2 gap-3" data-llm-pair>
+              <label class="block">Modèle
+                <select name="provider_id" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 bg-white" onchange="assistantProviderChanged(this)">
+                  <option value="">Par défaut{% if llm_default %} ({{ llm_default }}){% endif %}</option>
+                  {% for p in llm_providers %}
+                  <option value="{{ p.pk }}">{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label class="block">Nom du modèle
+                <select name="model_id" class="mt-0.5 w-full border border-[#e5e5e5] rounded-lg p-2 bg-white" onchange="assistantModelChanged(this)">
+                  <option value="">— Choisir —</option>
+                  {% for p in llm_providers %}{% for m in p.cached_models.all %}
+                  <option value="{{ m.model_id }}" data-provider="{{ p.pk }}">{{ m.model_id }}</option>
+                  {% endfor %}{% endfor %}
+                </select>
+              </label>
+            </div>
+            {% if not llm_providers %}
+            <p class="text-xs text-[#6e6e6e]">Aucun provider actif — <a href="{% url 'chat:settings_tab' tab='providers' %}" class="underline">Actualiser dans Paramètres</a>.</p>
+            {% endif %}
             <div class="flex flex-wrap gap-4">
               <label class="inline-flex items-center gap-2"><input type="checkbox" name="web_search" value="1"> Recherche web</label>
               <label class="inline-flex items-center gap-2"><input type="checkbox" name="thinking_enabled" value="1" checked> Réflexion</label>

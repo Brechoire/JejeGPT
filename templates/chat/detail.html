@@ -246,19 +246,45 @@ function chatApp() {
       a.className = 'flex justify-start';
       const ab = document.createElement('div');
       ab.className = 'w-full min-w-0';
+      const det = document.createElement('details');
+      det.className = 'reasoning-live';
+      det.open = true;
+      const sum = document.createElement('summary');
+      sum.textContent = 'Réflexion';
+      const rbody = document.createElement('div');
+      rbody.style.whiteSpace = 'pre-wrap';
+      det.appendChild(sum);
+      det.appendChild(rbody);
+      det.style.display = 'none';
+      ab.appendChild(det);
       const live = document.createElement('div');
       live.className = 'prose-jeje max-w-none';
-      live.style.whiteSpace = 'pre-wrap';
-      const caret = document.createElement('span');
-      caret.className = 'typing-caret';
+      const shimmer = document.createElement('div');
+      shimmer.className = 'stream-shimmer';
+      shimmer.setAttribute('role', 'status');
+      shimmer.setAttribute('aria-label', 'Génération en cours');
+      shimmer.innerHTML = '<span></span><span></span><span></span>';
+      ab.appendChild(shimmer);
       ab.appendChild(live);
-      ab.appendChild(caret);
       a.appendChild(ab);
       thread.appendChild(a);
       // La question remonte en haut : la réponse naît sous les yeux.
       this.scrollToEl(u);
       this.followOutput = this.nearBottom();
-      return live;
+      // Rendu markdown live (throttlé) : le brut n'est qu'un repli si les CDN manquent.
+      const state = { live, det, rbody, raw: '', started: false, timer: null, shimmer };
+      state.render = () => {
+        state.timer = null;
+        if (window.marked && window.DOMPurify && window.marked.parse) {
+          try {
+            live.innerHTML = window.DOMPurify.sanitize(window.marked.parse(state.raw, { breaks: true }));
+          } catch (e) { live.textContent = state.raw; }
+        } else {
+          live.textContent = state.raw;
+          live.style.whiteSpace = 'pre-wrap';
+        }
+      };
+      return state;
     },
     sendStream(form, isHero) {
       if (this.streaming) return;
@@ -271,14 +297,32 @@ function chatApp() {
       this.heroError = '';
       this.streaming = true;
       this.heroStreaming = !!isHero;
-      const live = this.appendLiveBubbles(prompt);
+      const view = this.appendLiveBubbles(prompt);
       const threadUrl = "{% url 'chat:thread_partial' conversation.pk %}";
       if (this.es) this.es.close();
       this.es = new EventSource("{% url 'chat:message_stream' conversation.pk %}?prompt=" + encodeURIComponent(prompt));
       this.es.onmessage = (e) => {
-        try { live.textContent += JSON.parse(e.data).token; } catch {}
+        try { view.raw += JSON.parse(e.data).token; } catch {}
+        if (!view.started) {
+          view.started = true;
+          view.shimmer.style.display = 'none';
+        }
+        if (!view.timer) {
+          view.timer = setTimeout(() => { view.render(); if (this.followOutput) this.scrollThread(); }, 180);
+        }
         if (this.followOutput) this.scrollThread();
       };
+      const settleReasoning = () => {
+        if (!view.rbody.textContent) view.det.remove();
+        else view.det.open = false;
+      };
+      this.es.addEventListener('reasoning', (e) => {
+        if (!view.det) return;
+        try { view.rbody.textContent += JSON.parse(e.data).token; } catch {}
+        view.det.style.display = '';
+        view.det.open = true;
+        if (this.followOutput) this.scrollThread();
+      });
       const refreshThread = () => {
         htmx.ajax('GET', threadUrl, {target: '#thread', swap: 'innerHTML'});
         // Après refresh : bas si suivi, sinon ancre sur la question répondue.
@@ -287,11 +331,15 @@ function chatApp() {
       this.es.addEventListener('error', (e) => {
         let msg = 'Erreur provider.';
         try { const d = JSON.parse(e.data); if (d.message) msg = d.message; } catch {}
+        settleReasoning();
         this.stopStream();
         if (isHero) { this.heroStreaming = false; this.heroError = msg; }
         else { refreshThread(); }
       });
       this.es.addEventListener('done', () => {
+        if (view.timer) { clearTimeout(view.timer); view.timer = null; }
+        view.render();
+        settleReasoning();
         this.stopStream();
         if (isHero) { window.location.reload(); }
         else { refreshThread(); }

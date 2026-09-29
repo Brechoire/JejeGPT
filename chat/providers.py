@@ -734,6 +734,7 @@ def _stream_responses(
     session_id: int | str | None,
     options: dict | None = None,
     usage_collector: dict | None = None,
+    reasoning_callback=None,
 ) -> Iterator[str]:
     opts = _clean_options(options)
     caps = effective_caps(provider, model_id)
@@ -755,6 +756,9 @@ def _stream_responses(
                     yield str(obj["delta"])
                 elif etype == "response.refusal.delta" and obj.get("delta"):
                     yield "Refus : " + str(obj["delta"])
+                elif etype in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+                    if obj.get("delta") and reasoning_callback is not None:
+                        reasoning_callback(str(obj["delta"]))
                 elif etype in ("error", "response.failed"):
                     # Vrai event d'erreur (un completed avec "error": null a un autre type).
                     raw = json.dumps(obj)
@@ -779,6 +783,7 @@ def _stream_messages(
     session_id: int | str | None,
     options: dict | None = None,
     usage_collector: dict | None = None,
+    reasoning_callback=None,
 ) -> Iterator[str]:
     opts = _clean_options(options)
     caps = effective_caps(provider, model_id)
@@ -823,6 +828,11 @@ def _stream_messages(
                     delta = obj.get("delta", {})
                     if isinstance(delta, dict) and delta.get("type") == "text_delta" and delta.get("text"):
                         yield str(delta["text"])
+                    elif (
+                        isinstance(delta, dict) and delta.get("type") == "thinking_delta"
+                        and delta.get("thinking") and reasoning_callback is not None
+                    ):
+                        reasoning_callback(str(delta["thinking"]))
                 elif etype == "error":
                     raw = json.dumps(obj)
                     flat = obj.get("message") if isinstance(obj.get("message"), str) else None
@@ -914,17 +924,24 @@ def chat_stream(
     route: str = "",
     options: dict | None = None,
     usage_collector: dict | None = None,
+    reasoning_callback=None,
 ) -> Iterator[str]:
-    """Générateur de tokens via SSE (data: {...} + data: [DONE])."""
+    """Générateur de tokens via SSE (data: {...} + data: [DONE]).
+
+    `reasoning_callback` reçoit les fragments de raisonnement (thinking)
+    au fil de l'eau, sans les mélanger aux tokens de réponse.
+    """
     started = time.perf_counter()
     try:
         if route == "responses":
             yield from _stream_responses(
-                provider, model_id, messages, temperature, timeout, session_id, options, usage_collector)
+                provider, model_id, messages, temperature, timeout, session_id, options, usage_collector,
+                reasoning_callback)
             return
         if route == "messages":
             yield from _stream_messages(
-                provider, model_id, messages, temperature, timeout, session_id, options, usage_collector)
+                provider, model_id, messages, temperature, timeout, session_id, options, usage_collector,
+                reasoning_callback)
             return
         try:
             with _chat_stream_cm(
@@ -966,6 +983,13 @@ def chat_stream(
                         if isinstance(chunk, dict) and isinstance(chunk.get("usage"), dict):
                             _fill_usage_openai(usage_collector, chunk["usage"])
                         continue
+                    try:
+                        raw_reason = chunk["choices"][0]["delta"].get("reasoning_content") or ""
+                        raw_reason = raw_reason or chunk["choices"][0]["delta"].get("reasoning") or ""
+                    except (KeyError, IndexError, TypeError, AttributeError):
+                        raw_reason = ""
+                    if raw_reason and reasoning_callback is not None:
+                        reasoning_callback(str(raw_reason))
                     if delta:
                         yield delta
         except ProviderError:

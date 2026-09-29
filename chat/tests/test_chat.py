@@ -995,7 +995,8 @@ def test_detail_uses_live_stream_composer():
     html = Client().get(f"/{c.pk}/").content.decode()
     assert "sendStream($el, false)" in html
     assert f"/conversations/{c.pk}/thread/" in html  # URL résolue du partiel post-stream
-    assert "typing-caret" in html
+    assert "stream-shimmer" in html  # shimmer moderne pendant la génération
+    assert "marked.parse" in html and "DOMPurify" in html  # markdown rendu en direct
     assert "liveText" not in html  # ancienne zone supprimée
     assert "Stream temps réel" not in html  # ancien bouton séparé supprimé
     assert "thread-live" in html  # conteneur live centré (pas de pleine largeur)

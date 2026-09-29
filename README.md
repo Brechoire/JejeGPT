@@ -30,9 +30,10 @@ le picker badge chaque modèle (`/responses`, `/messages`).
 Si `Actualiser` ne liste rien, ajoutez le `model_id` manuellement
 (champ « + » sous chaque provider).
 
-Note : les modèles thinking (ex. muse-spark) répondent après un bloc `reasoning`
-ignoré à l'affichage ; un champ `"error": null` dans une réponse `completed`
-n'est pas une erreur.
+Note : les modèles thinking (ex. muse-spark) affichent leur raisonnement dans un
+bloc « Réflexion » repliable (ouvert pendant le stream, replié à la fin,
+persisté mais jamais réinjecté dans l'historique) ; un champ `"error": null`
+dans une réponse `completed` n'est pas une erreur.
 
 ## Go/Zen : headers, limites, console
 - Chaque requête chat envoie `User-Agent: JejeGPT/1.0` + `x-opencode-session`
@@ -43,7 +44,8 @@ n'est pas une erreur.
   et l'option *Use balance* (crédits Zen). Suivi conso : console uniquement.
 
 Puis **Actualiser** pour lister les modèles (`GET /models`), choisir provider + modèle,
-écrire un message et **Envoyer** : les tokens **streament en direct dans le thread**
+écrire un message et **Envoyer** : shimmer moderne puis markdown rendu **en direct**
+(sanitizé, remplacement final serveur au refresh)
 (SSE `/conversations/<id>/stream/?prompt=...`, bouton ⏹ Stop, ↻ Régénérer).
 Sans JS : repli POST bloquant.
 
