@@ -40,12 +40,15 @@ def _history(conv: Conversation) -> list[dict]:
     msgs: list[dict] = []
     system = "\n\n".join(
         part for part in (
-            conv.system_prompt, project_context(conv), memory_context()
+            conv.system_prompt, project_context(conv), memory_context(),
+            _attachments_context(conv),
         ) if part
     )
     if system:
         msgs.append({"role": "system", "content": system})
-    for m in conv.messages.all():
+    # Colonnes utiles seules : le LLM ne consomme que role/content.
+    # .only() sûr ici : on ne touche jamais aux autres champs de m.
+    for m in conv.messages.only("role", "content").all():
         if m.role in ("user", "assistant") and m.content:
             msgs.append({"role": m.role, "content": m.content})
     # Partition intelligente : la dernière question parle-t-elle musique ?
@@ -87,17 +90,84 @@ def _last_usage_ctx(conv: Conversation) -> dict | None:
     }
 
 
+def _rendered_html(message: Message) -> str:
+    """HTML d'un message mémorisé (clé = contenu). Zéro risque de périmé :
+    édition/régénération changent le contenu donc la clé ; TTL borne le reste."""
+    import hashlib
+
+    from django.core.cache import cache
+
+    content = message.content or ""
+    if not content:
+        return ""
+    digest = hashlib.sha1(content.encode("utf-8")).hexdigest()[:16]
+    key = f"jejegpt:md:{message.pk}:{digest}"
+    html = cache.get(key)
+    if html is None:
+        html = render_markdown(content)
+        cache.set(key, html, 3600)
+    return html
+
+
 def _messages_ctx(conv: Conversation) -> list[dict]:
     items = []
-    for m in conv.messages.prefetch_related("exports"):
+    msgs = list(conv.messages.prefetch_related("exports").order_by("created_at", "id"))
+    # Regroupe les versions d'une même question (parent commun) pour le badge V1/V2.
+    from collections import defaultdict
+    groups: dict = defaultdict(list)
+    for m in msgs:
+        key = m.parent_id if m.parent_id else f"single-{m.pk}"
+        groups[key].append(m)
+    for m in msgs:
         exports = list(m.exports.all())
+        sibs = groups[m.parent_id] if m.parent_id else [m]
         items.append({
             "obj": m,
-            "html": render_markdown(m.content) if m.content else "",
+            "html": _rendered_html(m),
             "exports": exports,
+            "siblings": sibs,
+            "is_latest": (sibs[-1].pk == m.pk) if len(sibs) > 1 else True,
             **_newsletter_ctx(exports),
         })
     return items
+
+
+def _attachments_context(conv: Conversation) -> str:
+    """Extraits des pièces jointes, bornés, injectés en system (sans RAG)."""
+    try:
+        atts = list(conv.attachments.all()[:3])
+    except Exception:
+        return ""
+    parts = []
+    for a in atts:
+        txt = (a.excerpt or "").strip()
+        if txt:
+            parts.append(f"[Pièce jointe : {a.file_name}]\n{txt[:6000]}")
+    if not parts:
+        return ""
+    return "Documents joints par l'utilisateur (extraits, à citer si utile) :\n\n" + "\n\n".join(parts)
+
+
+def _followups_for(content: str) -> list[str]:
+    """3 relances heuristiques (sans appel LLM) sous la dernière réponse."""
+    text = (content or "").strip()
+    if not text:
+        return []
+    chips = []
+    if len(text) > 800:
+        chips.append("Résume en 5 points clés")
+    if "```" in text or "code" in text.lower():
+        chips.append("Explique le code étape par étape")
+    if "|" in text:
+        chips.append("Convertis le tableau en plan d'action")
+    for s in ("Approfondis avec des exemples concrets",
+              "Propose un plan d'action",
+              "Quelles sont les limites / points de vigilance ?"):
+        if len(chips) >= 3:
+            break
+        if s not in chips:
+            chips.append(s)
+    return chips[:3]
 
 
 def _newsletter_ctx(exports: list) -> dict:
@@ -178,6 +248,25 @@ def newsletter_channel(request: HttpRequest, mid: int, channel: str) -> HttpResp
         return redirect("chat:detail", pk=conv.pk)
 
 
+def _snippets_json(conv: Conversation | None = None) -> list[dict]:
+    """Slash-commands + gabarits + starters pour l'autocomplétion du composer."""
+    slashes = [
+        {"cmd": "/resume", "label": "Résumer", "prompt": "Résume en 5 points clés : "},
+        {"cmd": "/mail", "label": "Mail pro", "prompt": "Rédige un mail professionnel : "},
+        {"cmd": "/code", "label": "Code", "prompt": "Donne le code + explications : "},
+        {"cmd": "/traduire", "label": "Traduire EN", "prompt": "Traduis en anglais : "},
+        {"cmd": "/plan", "label": "Plan d'action", "prompt": "Propose un plan d'action concret : "},
+    ]
+    items = list(slashes)
+    for tpl in TaskTemplate.objects.all()[:20]:
+        items.append({"cmd": f"/{tpl.name.lower().replace(' ', '-')}",
+                      "label": tpl.name, "prompt": tpl.body[:200]})
+    if conv is not None and conv.assistant_id:
+        for s in conv.assistant.starter_list():
+            items.append({"cmd": "▶", "label": s[:60], "prompt": s})
+    return items
+
+
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     conv = get_object_or_404(Conversation.objects.select_related("assistant"), pk=pk)
     ScheduledRun.objects.filter(task__conversation=conv, seen=False).update(seen=True)
@@ -185,13 +274,16 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     starters: list[str] = []
     if not has_msgs and conv.assistant_id:
         starters = conv.assistant.starter_list()
+    thread_ctx = _thread_ctx(conv)
     ctx = {
         **_sidebar_ctx(conv),
         "has_messages": has_msgs,
         "assistant_starters": starters,
         "flash_messages": list(django_messages.get_messages(request)),
-        "providers": Provider.objects.filter(is_active=True).prefetch_related("cached_models"),
-        "messages": _messages_ctx(conv),
+        "providers": Provider.objects.filter(is_active=True).defer("api_key").prefetch_related("cached_models"),
+        "messages": thread_ctx["messages"],
+        "followups": thread_ctx["followups"],
+        "pinned_messages": thread_ctx["pinned_messages"],
         "default_temperature": settings.JEJEGPT_DEFAULT_TEMPERATURE,
         "controls": providers.ui_controls(conv.provider, conv.model_id),
         "effort_levels": providers.EFFORT_LEVELS,
@@ -199,24 +291,38 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
         "research_run": DeepResearchRun.objects.filter(
             conversation=conv, status="running"
         ).first(),
+        "documents": list(conv.documents.all()[:10]),
+        "active_document": conv.documents.first(),
+        "attachments": list(conv.attachments.all()[:10]),
+        "snippets_json": _snippets_json(conv),
     }
     return render(request, "chat/detail.html", ctx)
 
 
 def _sidebar_ctx(conversation: Conversation) -> dict:
     cutoff = timezone.now() - timedelta(days=30)
-    all_convs = Conversation.objects.select_related("project", "assistant").all()
+    # Audit templates du 29/09/2026 : sidebar_item.html ne lit que
+    # c.pk / c.title / c.project.name (+ project_id pour le test {% if c.project %}).
+    # Les TEXT lourds (system_prompt...) sont exclus via .only(). Listes bornées
+    # à 50+50 : au-delà, la recherche globale (/recherche/) prend le relais.
+    base = (
+        Conversation.objects.select_related("project", "assistant")
+        .only("id", "title", "updated_at", "project_id", "assistant_id", "project__name")
+        .order_by("-updated_at")
+    )
     return {
-        "conversations": all_convs,
-        "recent_convs": all_convs.filter(updated_at__gte=cutoff),
-        "older_convs": all_convs.filter(updated_at__lt=cutoff),
+        "conversations": base,
+        "recent_convs": base.filter(updated_at__gte=cutoff)[:50],
+        "older_convs": base.filter(updated_at__lt=cutoff)[:50],
         "conversation": conversation,
         "active_project_id": getattr(conversation, "project_id", None),
         "scheduled_unseen": ScheduledRun.objects.filter(seen=False).count(),
         "projects": list(
-            Project.objects.prefetch_related("conversations").annotate(
+            # Pas de prefetch("conversations") : sidebar.html n'itère jamais les
+            # conversations du projet, seul conv_count (annotate) est affiché.
+            Project.objects.annotate(
                 conv_count=models.Count("conversations")
-            )
+            ).only("id", "name", "instructions")
         ),
         "assistants": list(
             Assistant.objects.annotate(conv_count=models.Count("conversations")).all()
@@ -226,7 +332,7 @@ def _sidebar_ctx(conversation: Conversation) -> dict:
 
 def _resolve_default_llm() -> tuple[Provider | None, str]:
     """Provider + modèle par défaut (réglage global, sinon 1er provider actif)."""
-    defaults = AppSettings.get_solo()
+    defaults = AppSettings.get_cached()
     if defaults.default_valid():
         return defaults.default_provider, defaults.default_model_id
     first_provider = Provider.objects.filter(is_active=True).first()
@@ -250,10 +356,10 @@ def _assistant_llm(assistant: Assistant) -> tuple[Provider | None, str]:
 
 def _assistant_llm_ctx() -> dict:
     """Providers actifs + défaut global, pour les selects LLM des formulaires."""
-    defaults = AppSettings.get_solo()
+    defaults = AppSettings.get_cached()
     return {
         "llm_providers": list(
-            Provider.objects.filter(is_active=True).prefetch_related("cached_models")
+            Provider.objects.filter(is_active=True).defer("api_key").prefetch_related("cached_models")
         ),
         "llm_default": (
             f"{defaults.default_provider.name} / {defaults.default_model_id}"
@@ -377,9 +483,9 @@ def project_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "older_convs": [],
             "active_project_id": None,
             "projects": list(
-                Project.objects.prefetch_related("conversations").annotate(
+                Project.objects.annotate(
                     conv_count=models.Count("conversations")
-                )
+                ).only("id", "name", "instructions")
             ),
             "assistants": list(
                 Assistant.objects.annotate(conv_count=models.Count("conversations"))
@@ -431,10 +537,13 @@ def project_delete(request: HttpRequest, pk: int) -> HttpResponse:
 
 @require_POST
 def project_conversations_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    from django.db import transaction
+
     project = get_object_or_404(Project, pk=pk)
     count = project.conversations.count()
     if count:
-        project.conversations.all().delete()
+        with transaction.atomic():
+            project.conversations.all().delete()
         django_messages.success(request, f"{count} conversation(s) du projet « {project.name} » supprimée(s).")
     else:
         django_messages.info(request, f"Aucune conversation à supprimer dans « {project.name} ».")
@@ -686,7 +795,7 @@ def provider_refresh(request: HttpRequest, pk: int) -> HttpResponse:
     count, error = providers.sync_models(provider, timeout=settings.JEJEGPT_HTTP_TIMEOUT)
     if request.headers.get("HX-Request"):
         return render(request, "chat/partials/model_options.html", {
-            "providers": Provider.objects.filter(is_active=True).prefetch_related("cached_models"),
+            "providers": Provider.objects.filter(is_active=True).defer("api_key").prefetch_related("cached_models"),
             "conversation": Conversation.objects.first(),
             "refresh_info": f"{count} modèle(s)" if not error else f"Erreur : {error}",
         })
@@ -729,6 +838,33 @@ def model_caps(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @require_POST
+def model_web_test(request: HttpRequest, pk: int) -> HttpResponse:
+    """Teste empiriquement la navigation web d'un modèle (bouton « Tester »).
+
+    Sonde datée avec web forcé + vérification serveur des liens cités.
+    Ne modifie JAMAIS supports_web : seul le verdict (statut + date) est
+    persisté, avec une suggestion si les cases contredisent le résultat.
+    """
+    from .webtest import run_web_test
+
+    provider = get_object_or_404(Provider, pk=pk)
+    model = get_object_or_404(LLMModel, provider=provider, model_id=(request.POST.get("model_id") or "").strip()[:300])
+    status, detail = run_web_test(provider, model.model_id)
+    model.web_test_status = status
+    model.web_test_detail = detail[:300]
+    model.web_test_at = timezone.now()
+    model.save(update_fields=["web_test_status", "web_test_detail", "web_test_at"])
+    if status == "ok" and not model.supports_web:
+        django_messages.info(request, f"« {model.model_id} » navigue : pensez à cocher « web ».")
+    elif status == "ko" and model.supports_web:
+        django_messages.info(request, f"« {model.model_id} » ne navigue pas : pensez à décocher « web ».")
+    else:
+        label = {"ok": "navigue", "ko": "ne navigue pas"}.get(status, "verdict incertain")
+        django_messages.info(request, f"Test web « {model.model_id} » : {label} — {detail}")
+    return redirect("chat:settings_tab", tab="providers")
+
+
+@require_POST
 def model_add(request: HttpRequest, pk: int) -> HttpResponse:
     """Ajoute un model_id au cache (secours si GET /models incompatible)."""
     provider = get_object_or_404(Provider, pk=pk)
@@ -749,7 +885,7 @@ SETTINGS_TABS = [
     "facturation", "utilisation", "statistiques", "providers", "donnees",
     "navigateur", "stockage", "protection", "securite", "parental",
 ]
-FUNCTIONAL_TABS = {"general", "personnalisation", "providers", "donnees"}
+FUNCTIONAL_TABS = {"general", "personnalisation", "providers", "donnees", "utilisation"}
 
 
 def settings_page(request: HttpRequest, tab: str = "general") -> HttpResponse:
@@ -762,9 +898,9 @@ def settings_page(request: HttpRequest, tab: str = "general") -> HttpResponse:
             "older_convs": [],
             "active_project_id": None,
             "projects": list(
-                Project.objects.prefetch_related("conversations").annotate(
+                Project.objects.annotate(
                     conv_count=models.Count("conversations")
-                )
+                ).only("id", "name", "instructions")
             ),
             "assistants": list(
                 Assistant.objects.annotate(conv_count=models.Count("conversations"))
@@ -778,7 +914,7 @@ def settings_page(request: HttpRequest, tab: str = "general") -> HttpResponse:
         "is_functional": tab in FUNCTIONAL_TABS,
         "providers": Provider.objects.prefetch_related("cached_models"),
         "current_conv": conv,
-        "app_settings": AppSettings.get_solo(),
+        "app_settings": AppSettings.get_cached(),
         "default_preset": settings.JEJEGPT_DEFAULT_SYSTEM_PROMPT,
         "memory_facts": list(MemoryFact.objects.all()[:100]),
         "memory_max_facts": settings.JEJEGPT_MEMORY_MAX_FACTS,
@@ -942,6 +1078,23 @@ def settings_save(request: HttpRequest) -> HttpResponse:
 def data_export(request: HttpRequest) -> HttpResponse:
     import json
 
+    from django.db.models import Prefetch
+
+    # 2 requêtes au lieu de 1+N : conversations + messages préchargés,
+    # colonnes utiles seules. HttpResponse conservé (pas de streaming) pour
+    # ne pas casser le contrat existant (tests + Content-Disposition).
+    convs = list(
+        Conversation.objects.only("id", "title", "model_id", "temperature")
+        .order_by("id")
+        .prefetch_related(
+            Prefetch(
+                "messages",
+                queryset=Message.objects.only(
+                    "id", "conversation_id", "role", "content", "created_at"
+                ).order_by("id"),
+            )
+        )
+    )
     payload = [
         {
             "title": c.title,
@@ -952,7 +1105,7 @@ def data_export(request: HttpRequest) -> HttpResponse:
                 for m in c.messages.all()
             ],
         }
-        for c in Conversation.objects.all()
+        for c in convs
     ]
     resp = HttpResponse(json.dumps(payload, ensure_ascii=False, indent=2), content_type="application/json")
     resp["Content-Disposition"] = 'attachment; filename="jejegpt-export.json"'
@@ -961,7 +1114,20 @@ def data_export(request: HttpRequest) -> HttpResponse:
 
 @require_POST
 def data_clear(request: HttpRequest) -> HttpResponse:
-    Conversation.objects.all().delete()
+    """Efface TOUTES les conversations (cascade). Garde serveur obligatoire.
+
+    Le confirm JS du template se contourne par curl : on exige confirm=SUPPRIMER
+    côté serveur, sinon redirection sans suppression. Suppression en transaction
+    atomique (réversible par ROLLBACK en cas d'erreur à mi-cascade).
+    """
+    from django.db import transaction
+
+    if request.POST.get("confirm") != "SUPPRIMER":
+        django_messages.error(request, "Confirmation requise : cochez la case avant d'effacer.")
+        return redirect("chat:settings_tab", tab="donnees")
+    with transaction.atomic():
+        Conversation.objects.all().delete()
+    django_messages.success(request, "Toutes les conversations ont été supprimées.")
     return redirect("chat:settings_tab", tab="donnees")
 
 
@@ -1034,10 +1200,7 @@ def message_feedback(request: HttpRequest, mid: int) -> HttpResponse:
     msg.save(update_fields=["feedback"])
     conv = msg.conversation
     if request.headers.get("HX-Request"):
-        return render(request, "chat/partials/thread.html", {
-            "conversation": conv,
-            "messages": _messages_ctx(conv),
-        })
+        return render(request, "chat/partials/thread.html", _thread_ctx(conv))
     return redirect("chat:detail", pk=conv.pk)
 
 
@@ -1134,28 +1297,55 @@ def scheduled_list(request: HttpRequest) -> HttpResponse:
             "older_convs": [],
             "active_project_id": None,
             "projects": list(
-                Project.objects.prefetch_related("conversations").annotate(
+                Project.objects.annotate(
                     conv_count=models.Count("conversations")
-                )
+                ).only("id", "name", "instructions")
             ),
             "assistants": list(
                 Assistant.objects.annotate(conv_count=models.Count("conversations"))
             ),
         }
-    tasks = list(ScheduledTask.objects.select_related("conversation"))
+    from django.db.models import Prefetch
+
+    tasks = list(
+        ScheduledTask.objects.select_related("conversation").prefetch_related(
+            # Pas de slice dans le Prefetch : [:5] s'appliquerait au total global,
+            # pas à 5 par tâche. On précharge ordonné (colonnes utiles seules)
+            # puis on tronque à 5 PAR tâche en Python, sans requête supplémentaire.
+            Prefetch(
+                "runs",
+                queryset=ScheduledRun.objects.order_by("-created_at").only(
+                    "id", "task_id", "success", "error", "cause",
+                    "has_changes", "created_at", "message_id",
+                ),
+            )
+        )
+    )
+    # Filet : si l'échec le plus récent n'est pas dans les 5 derniers runs,
+    # 1 seule requête groupée au lieu de N (une par tâche en échec).
+    tasks_with_failures = [t.pk for t in tasks if t.failures]
+    fallback_failures: dict[int, ScheduledRun] = {}
+    if tasks_with_failures:
+        for run in (
+            ScheduledRun.objects.filter(task_id__in=tasks_with_failures, success=False)
+            .order_by("task_id", "-created_at")
+            .only("id", "task_id", "success", "error", "created_at", "message_id")
+        ):
+            fallback_failures.setdefault(run.task_id, run)
     for task in tasks:
         days = [int(d) for d in (task.days or "").split(",") if d.strip().isdigit()]
         time_str = task.time.strftime("%H:%M") if task.time else None
         task.schedule_summary = describe_schedule(  # type: ignore[attr-defined]
             task.frequency, days, time_str, task.once_at, month_day=task.month_day
         )
-        recent = list(task.runs.order_by("-created_at")[:5])
+        # Lecture du cache prefetch : aucune requête ici (runs déjà chargés).
+        recent = list(task.runs.all()[:5])
         task.recent_runs = recent  # type: ignore[attr-defined]
         task.last_run = recent[0] if recent else None  # type: ignore[attr-defined]
         if task.failures:
             task.last_failure = next((r for r in recent if not r.success), None)  # type: ignore[attr-defined]
             if task.last_failure is None:  # type: ignore[attr-defined]
-                task.last_failure = task.runs.filter(success=False).first()  # type: ignore[attr-defined]
+                task.last_failure = fallback_failures.get(task.pk)  # type: ignore[attr-defined]
         else:
             task.last_failure = None  # type: ignore[attr-defined]
         task.days_list = days  # type: ignore[attr-defined]
@@ -1164,7 +1354,7 @@ def scheduled_list(request: HttpRequest) -> HttpResponse:
             task.once_at_str = timezone.localtime(task.once_at).strftime("%Y-%m-%dT%H:%M")  # type: ignore[attr-defined]
         else:
             task.once_at_str = ""  # type: ignore[attr-defined]
-    active_providers = list(Provider.objects.filter(is_active=True).prefetch_related("cached_models"))
+    active_providers = list(Provider.objects.filter(is_active=True).defer("api_key").prefetch_related("cached_models"))
     ctx.update({
         "conversation": conv,
         "tasks": tasks,
@@ -1545,7 +1735,9 @@ def _generate_reply(conv: Conversation) -> tuple[bool, str]:
             options=_conv_options(conv),
             usage_collector=usage,
         )
-        Message.objects.create(conversation=conv, role="assistant", content=reply)
+        Message.objects.create(conversation=conv, role="assistant", content=reply,
+                               model_label=f"{conv.provider.name} / {conv.model_id}"
+                               if conv.provider else (conv.model_id or ""))
     except providers.ProviderError as exc:
         Message.objects.create(conversation=conv, role="assistant", content="", error=exc.message)
         _record_usage(conv, usage, success=False, error=exc.message)
@@ -1553,7 +1745,8 @@ def _generate_reply(conv: Conversation) -> tuple[bool, str]:
         return False, exc.message
     conv.save()
     _record_usage(conv, usage, success=True)
-    last_user = conv.messages.filter(role="user").order_by("-created_at", "-id").first()
+    # .only() sûr : seul content est lu ci-dessous.
+    last_user = conv.messages.only("content").filter(role="user").order_by("-created_at", "-id").first()
     _maybe_extract_memory(conv, last_user.content if last_user else "", reply)
     _maybe_auto_images(conv, last_user.content if last_user else "")
     return True, ""
@@ -1743,8 +1936,13 @@ def _record_usage(conv: Conversation, usage: dict, success: bool = True, error: 
 
 
 def _delete_following(conv: Conversation, msg: Message) -> None:
-    ids = list(conv.messages.order_by("created_at", "id").values_list("id", flat=True))
-    conv.messages.filter(id__in=ids[ids.index(msg.id) + 1:]).delete()
+    # DELETE direct, sans charger tous les IDs en Python. Sémantique identique
+    # à l'ordre (created_at, id) : tout ce qui suit strictement msg est supprimé.
+    # 1 requête au lieu de 2 + pic mémoire sur les longs fils.
+    conv.messages.filter(
+        models.Q(created_at__gt=msg.created_at)
+        | models.Q(created_at=msg.created_at, id__gt=msg.id)
+    ).delete()
 
 
 @require_POST
@@ -1822,10 +2020,7 @@ def message_send(request: HttpRequest, pk: int) -> HttpResponse:
             conv.title = content[:60]
     conv.save()
     if request.headers.get("HX-Request"):
-        return render(request, "chat/partials/thread.html", {
-            "conversation": conv,
-            "messages": _messages_ctx(conv),
-        })
+        return render(request, "chat/partials/thread.html", _thread_ctx(conv))
     return redirect("chat:detail", pk=conv.pk)
 
 
@@ -1837,16 +2032,19 @@ def message_regenerate(request: HttpRequest, pk: int) -> HttpResponse:
         return HttpResponse("Rien à régénérer.", status=400)
     conv.messages.filter(role="assistant", content="", error="").delete()
     _generate_reply(conv)
-    return render(request, "chat/partials/thread.html", {
-        "conversation": conv,
-        "messages": _messages_ctx(conv),
-    })
+    return render(request, "chat/partials/thread.html", _thread_ctx(conv))
 
 
-def _thread_ctx(conv: Conversation) -> dict:
+def _thread_ctx(conv: Conversation, notice: str = "") -> dict:
+    last_a = conv.messages.filter(role="assistant").exclude(content="").order_by(
+        "created_at", "id").last()
     return {
         "conversation": conv,
         "messages": _messages_ctx(conv),
+        "providers": Provider.objects.filter(is_active=True).defer("api_key").prefetch_related("cached_models"),
+        "followups": _followups_for(last_a.content if last_a else ""),
+        "pinned_messages": list(conv.messages.filter(pinned=True).order_by("created_at")[:10]),
+        "notice": notice,
     }
 
 
@@ -1917,6 +2115,8 @@ def message_stream(request: HttpRequest, pk: int) -> StreamingHttpResponse:
             Message.objects.create(
                 conversation=conv, role="assistant", content="".join(full),
                 reasoning="".join(reasoning_parts),
+                model_label=f"{conv.provider.name} / {conv.model_id}"
+                if conv.provider else (conv.model_id or ""),
             )
             _record_usage(conv, usage, success=True)
             last_user = conv.messages.filter(role="user").last()
@@ -1933,3 +2133,302 @@ def message_stream(request: HttpRequest, pk: int) -> StreamingHttpResponse:
     resp = StreamingHttpResponse(gen(), content_type="text/event-stream")
     resp["Cache-Control"] = "no-cache"
     return resp
+
+
+# ================= Enrichissements (Canvas, épingles, fork, comparo, upload, recherche) ============
+
+@require_POST
+def message_pin(request: HttpRequest, mid: int) -> HttpResponse:
+    """Épingle / désépingle un message (sommaire + recherche)."""
+    msg = get_object_or_404(Message, pk=mid)
+    msg.pinned = not msg.pinned
+    msg.save(update_fields=["pinned"])
+    conv = msg.conversation
+    if request.headers.get("HX-Request"):
+        return render(request, "chat/partials/thread.html", _thread_ctx(conv))
+    return redirect("chat:detail", pk=conv.pk)
+
+
+@require_POST
+def conversation_fork(request: HttpRequest, mid: int) -> HttpResponse:
+    """Fork : nouvelle conversation copiant l'historique jusqu'au message donné."""
+    from django.db import transaction
+
+    msg = get_object_or_404(Message.objects.select_related("conversation"), pk=mid)
+    src = msg.conversation
+    # Colonnes copiées seules (mêmes 4 champs qu'avant : role, content,
+    # reasoning, model_label — aucun changement fonctionnel, pas de signaux
+    # sur Message donc bulk_create sûr ici).
+    ordered = list(
+        src.messages.only("role", "content", "reasoning", "model_label")
+        .order_by("created_at", "id")
+    )
+    ids = [m.pk for m in ordered]
+    try:
+        idx = ids.index(msg.pk)
+    except ValueError:
+        idx = len(ordered) - 1
+    with transaction.atomic():
+        fork = Conversation.objects.create(
+            title=f"{src.title} (fork)".strip()[:200],
+            provider=src.provider, model_id=src.model_id,
+            system_prompt=src.system_prompt, temperature=src.temperature,
+            reasoning_effort=src.reasoning_effort, web_search=src.web_search,
+            thinking_enabled=src.thinking_enabled, show_images=src.show_images,
+            project=src.project, assistant=src.assistant,
+        )
+        Message.objects.bulk_create(
+            [
+                Message(conversation=fork, role=m.role, content=m.content,
+                        reasoning=m.reasoning, model_label=m.model_label)
+                for m in ordered[:idx + 1]
+            ],
+            batch_size=500,
+        )
+    return redirect("chat:detail", pk=fork.pk)
+
+
+@require_POST
+def message_retry_with(request: HttpRequest, mid: int) -> HttpResponse:
+    """Rejoue la question d'ancrage avec un autre provider/modèle (comparo A-B).
+
+    Non destructif : la nouvelle réponse est une version sœur (parent commun),
+    l'ancienne reste visible avec badge V1/V2 + label modèle.
+    """
+    msg = get_object_or_404(Message.objects.select_related("conversation"), pk=mid)
+    anchor = _regen_anchor(msg)
+    conv = msg.conversation
+
+    def _fail(text: str) -> HttpResponse:
+        # HTMX ne swap que le 2xx : on renvoie le thread (200) avec bannière
+        # d'erreur visible, sinon le clic semble ne rien faire.
+        if request.headers.get("HX-Request"):
+            return render(request, "chat/partials/thread.html", _thread_ctx(conv, notice=text))
+        django_messages.error(request, text)
+        return redirect("chat:detail", pk=conv.pk)
+
+    if anchor is None:
+        return _fail("Aucune question à rejouer.")
+    try:
+        alt_provider = Provider.objects.get(
+            pk=int(request.POST.get("provider_id") or 0), is_active=True)
+    except (Provider.DoesNotExist, ValueError, TypeError):
+        return _fail("Provider invalide ou inactif.")
+    alt_model = (request.POST.get("model_id") or "").strip()[:300]
+    if not alt_model or not alt_provider.cached_models.filter(model_id=alt_model).exists():
+        return _fail("Modèle inconnu pour ce provider (Actualiser d'abord).")
+    hist = _history(conv)
+    # Tronque l'historique à l'ancre pour rejouer à contexte identique.
+    keep: list[dict] = []
+    for h in hist:
+        keep.append(h)
+        if h["role"] == "user" and h["content"] == anchor.content:
+            break
+    usage = providers._empty_usage()
+    try:
+        reply = providers.chat_complete(
+            alt_provider, alt_model, keep,
+            temperature=conv.temperature, timeout=settings.JEJEGPT_HTTP_TIMEOUT * 4,
+            session_id=conv.pk,
+            route=providers.resolve_route(alt_provider, alt_model),
+            options=_conv_options(conv),
+            usage_collector=usage,
+        )
+    except providers.ProviderError as exc:
+        _record_usage(conv, usage, success=False, error=exc.message)
+        return _fail(f"Rejeu impossible : {exc.message}")
+    existing = conv.messages.filter(parent=anchor).count()
+    Message.objects.create(
+        conversation=conv, role="assistant", content=reply,
+        parent=anchor, version_no=existing + 2 if existing else 2,
+        model_label=f"{alt_provider.name} / {alt_model}",
+    )
+    _record_usage(conv, usage, success=True)
+    conv.save()
+    if request.headers.get("HX-Request"):
+        return render(request, "chat/partials/thread.html", _thread_ctx(conv))
+    return redirect("chat:detail", pk=conv.pk)
+
+
+def global_search(request: HttpRequest) -> HttpResponse:
+    """Recherche plein-texte SQLite (titres + contenus), sans index externe."""
+    # LIKE '%q%' non indexable par construction : on borne q pour limiter le
+    # coût du scan (pas de FTS tant que le volume ne le justifie pas — cf. SQL-009).
+    q = (request.GET.get("q") or "").strip()[:80]
+    results: list = []
+    convs = []
+    if len(q) >= 2:
+        convs = list(Conversation.objects.filter(title__icontains=q)[:10])
+        results = list(
+            Message.objects.select_related("conversation")
+            .filter(content__icontains=q).order_by("-created_at")[:30]
+        )
+    conv = Conversation.objects.first()
+    ctx = _sidebar_ctx(conv) if conv is not None else {
+        "recent_convs": [], "older_convs": [],
+        "active_project_id": None, "projects": [], "assistants": [],
+    }
+    ctx.update({"conversation": conv, "query": q, "found_convs": convs, "results": results})
+    return render(request, "chat/search.html", ctx)
+
+
+def snippets_api(request: HttpRequest) -> JsonResponse:
+    """Snippets pour le '/' du composer : slash + gabarits + starters."""
+    conv = None
+    if pk := (request.GET.get("conversation") or "").strip():
+        try:
+            conv = Conversation.objects.select_related("assistant").get(pk=int(pk))
+        except (Conversation.DoesNotExist, ValueError):
+            conv = None
+    return JsonResponse({"snippets": _snippets_json(conv)})
+
+
+# ---- Canvas (Document) ----
+
+@require_POST
+def document_open(request: HttpRequest, pk: int) -> HttpResponse:
+    """Crée/ouvre le Canvas depuis une réponse (ou vierge)."""
+    conv = get_object_or_404(Conversation, pk=pk)
+    doc = conv.documents.first()
+    if doc is None:
+        seed = ""
+        if mid := (request.POST.get("message_id") or "").strip():
+            try:
+                seed = Message.objects.get(pk=int(mid), conversation=conv).content or ""
+            except (Message.DoesNotExist, ValueError):
+                seed = ""
+        from .models import Document
+        doc = Document.objects.create(
+            conversation=conv, title=(conv.title or "Document")[:200], content=seed)
+    if request.headers.get("HX-Request"):
+        return render(request, "chat/partials/canvas.html",
+                      {"conversation": conv, "document": doc})
+    return redirect("chat:detail", pk=conv.pk)
+
+
+@require_POST
+def document_save(request: HttpRequest, pk: int) -> JsonResponse:
+    """Sauvegarde manuelle du Canvas (édition type ChatGPT)."""
+    from .models import Document
+    doc = get_object_or_404(Document.objects.select_related("conversation"), pk=pk)
+    doc.content = request.POST.get("content") or ""
+    if title := (request.POST.get("title") or "").strip()[:200]:
+        doc.title = title
+    doc.version += 1
+    doc.save(update_fields=["content", "title", "version", "updated_at"])
+    return JsonResponse({"ok": True, "version": doc.version})
+
+
+CANVAS_ACTIONS = {
+    "raccourcir": "Raccourcis ce document de moitié, sans perdre les idées clés.",
+    "allonger": "Développe ce document avec exemples concrets et détails utiles.",
+    "ton-pro": "Réécris dans un ton professionnel direct.",
+    "corriger": "Corrige orthographe, grammaire et clarté, sans changer le fond.",
+    "traduire-en": "Traduis en anglais, ton professionnel.",
+}
+
+
+@require_POST
+def document_action(request: HttpRequest, pk: int) -> JsonResponse:
+    """Applique une action IA au Canvas via le LLM de la conversation."""
+    from .models import Document
+    doc = get_object_or_404(Document.objects.select_related("conversation"), pk=pk)
+    conv = doc.conversation
+    action = (request.POST.get("action") or "").strip()
+    custom = (request.POST.get("custom") or "").strip()
+    if action == "custom":
+        instruction = custom[:500] if custom else ""
+    else:
+        instruction = CANVAS_ACTIONS.get(action, "")
+    if not instruction:
+        return JsonResponse({"error": "Action inconnue."}, status=400)
+    if conv.provider is None or not conv.model_id:
+        return JsonResponse({"error": "Configurez un provider et un modèle."}, status=400)
+    usage = providers._empty_usage()
+    try:
+        out = providers.chat_complete(
+            conv.provider, conv.model_id,
+            [{"role": "user",
+              "content": f"{instruction}\n\n--- DOCUMENT ---\n{doc.content[:12000]}"}],
+            temperature=conv.temperature, timeout=settings.JEJEGPT_HTTP_TIMEOUT * 4,
+            session_id=conv.pk,
+            route=providers.resolve_route(conv.provider, conv.model_id),
+            options=_conv_options(conv),
+            usage_collector=usage,
+        )
+    except providers.ProviderError as exc:
+        return JsonResponse({"error": exc.message}, status=400)
+    doc.content = out
+    doc.version += 1
+    doc.save(update_fields=["content", "version", "updated_at"])
+    _record_usage(conv, usage, success=True)
+    return JsonResponse({"ok": True, "content": out, "version": doc.version})
+
+
+# ---- Pièces jointes ----
+
+ATTACH_MAX_BYTES = 512 * 1024
+ATTACH_EXTS = {".txt", ".md", ".csv", ".json", ".html", ".docx"}
+
+
+def _extract_attachment_text(path, name: str) -> str:
+    low = (name or "").lower()
+    if low.endswith(".docx"):
+        try:
+            from docx import Document as DocxDoc
+            return "\n".join(p.text for p in DocxDoc(path).paragraphs)[:8000]
+        except Exception:
+            return ""
+    try:
+        return open(path, encoding="utf-8", errors="replace").read()[:8000]
+    except Exception:
+        try:
+            return open(path, encoding="latin-1", errors="replace").read()[:8000]
+        except Exception:
+            return ""
+
+
+@require_POST
+def attachment_upload(request: HttpRequest, pk: int) -> HttpResponse:
+    """Upload local borné (texte uniquement, pas de RAG ni d'OCR)."""
+    from pathlib import Path
+
+    from .models import Attachment
+
+    conv = get_object_or_404(Conversation, pk=pk)
+    up = request.FILES.get("file")
+    if up is None:
+        django_messages.error(request, "Aucun fichier reçu.")
+        return redirect("chat:detail", pk=conv.pk)
+    suffix = Path(up.name or "").suffix.lower()
+    if suffix not in ATTACH_EXTS:
+        django_messages.error(
+            request, f"Format refusé ({suffix or 'sans extension'}). "
+            "Acceptés : txt, md, csv, json, html, docx.")
+        return redirect("chat:detail", pk=conv.pk)
+    if up.size > ATTACH_MAX_BYTES:
+        django_messages.error(request, "Fichier trop lourd (512 Ko max).")
+        return redirect("chat:detail", pk=conv.pk)
+    att = Attachment(conversation=conv, file=up, file_name=up.name[:200],
+                     mime=up.content_type or "", size=up.size)
+    att.save()
+    try:
+        att.excerpt = _extract_attachment_text(att.file.path, att.file_name)
+        att.save(update_fields=["excerpt"])
+    except Exception:
+        logger.exception("attachment extract failed")
+    django_messages.success(request, f"« {att.file_name} » joint (contexte, 6000 car. max).")
+    return redirect("chat:detail", pk=conv.pk)
+
+
+@require_POST
+def attachment_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    from .models import Attachment
+    att = get_object_or_404(Attachment.objects.select_related("conversation"), pk=pk)
+    conv_id = att.conversation_id
+    try:
+        att.file.delete(save=False)
+    except Exception:
+        pass
+    att.delete()
+    return redirect("chat:detail", pk=conv_id)

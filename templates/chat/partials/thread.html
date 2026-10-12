@@ -1,4 +1,13 @@
 <div id="thread-box" class="w-full max-w-5xl mx-auto px-4 sm:px-6 py-2 space-y-8">
+{% if notice %}
+<div class="p-3 rounded-xl border bg-red-50 border-red-200 text-red-700 text-[0.8125rem]" role="alert">⚠️ {{ notice }}</div>
+{% endif %}
+{% if pinned_messages %}
+<div class="border border-amber-200 bg-amber-50 rounded-xl p-2.5 text-xs" id="pinned-list">
+  <span class="font-semibold">📌 Épinglés :</span>
+  {% for pm in pinned_messages %}<a href="#msg-{{ pm.pk }}" class="ml-2 underline hover:no-underline">{{ pm.content|truncatechars:40 }}</a>{% endfor %}
+</div>
+{% endif %}
 {% for item in messages %}
   {% if item.obj.role == "user" %}
   <div class="flex justify-end">
@@ -35,14 +44,17 @@
   {% else %}
   <div class="flex justify-start" id="msg-{{ item.obj.pk }}">
     <div class="w-full min-w-0">
+      {% if item.siblings|length > 1 %}<div class="mb-1 text-xs text-[#6e6e6e]">V{{ item.obj.version_no }}{% if item.obj.model_label %} · {{ item.obj.model_label }}{% endif %} · {{ item.siblings|length }} versions{% if not item.is_latest %} · <span class="font-medium">ancienne version</span>{% endif %}</div>{% elif item.obj.model_label %}<div class="mb-1 text-xs text-[#6e6e6e]">{{ item.obj.model_label }}</div>{% endif %}
       {% if item.obj.error %}<div class="text-red-600 text-[0.9375rem] mb-2">⚠️ {{ item.obj.error }}</div>{% endif %}
       {% if item.obj.reasoning %}<details class="reasoning"><summary>Réflexion</summary><div class="whitespace-pre-wrap">{{ item.obj.reasoning }}</div></details>{% endif %}
       {% if item.html %}<div class="prose-jeje max-w-none">{{ item.html|safe }}</div>{% elif not item.obj.error %}<span class="text-[#b4b4b4]">…</span>{% endif %}
-      <div class="mt-2 flex items-center gap-0.5">
+      <div class="mt-2 flex items-center gap-0.5 flex-wrap">
         {% if item.obj.content %}
         <button type="button" class="msg-action" data-tip="Copier" onclick="copyMsg(this)" data-raw="{{ item.obj.content|escape }}" aria-label="Copier la réponse">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
         </button>
+        <button type="button" class="msg-action" data-tip="Copier en Markdown" onclick="copyMarkdown(this)" data-raw="{{ item.obj.content|escape }}" aria-label="Copier en Markdown">MD</button>
+        <button type="button" class="msg-action" data-tip="Écouter" onclick="speakText(this)" data-raw="{{ item.obj.content|escape|truncatechars:2000 }}" aria-label="Lire à voix haute">🔊</button>
         <form method="post" action="{% url 'chat:message_feedback' item.obj.pk %}" hx-post="{% url 'chat:message_feedback' item.obj.pk %}" hx-target="#thread" hx-swap="innerHTML" class="inline">
           {% csrf_token %}<input type="hidden" name="value" value="up">
           <button class="msg-action {% if item.obj.feedback == 'up' %}text-accent{% endif %}" data-tip="Bonne réponse" aria-label="Bonne réponse">
@@ -61,6 +73,27 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
           </button>
         </form>
+        <form method="post" action="{% url 'chat:message_pin' item.obj.pk %}" hx-post="{% url 'chat:message_pin' item.obj.pk %}" hx-target="#thread" hx-swap="innerHTML" class="inline">
+          {% csrf_token %}
+          <button class="msg-action {% if item.obj.pinned %}text-accent{% endif %}" data-tip="{% if item.obj.pinned %}Désépingler{% else %}Épingler{% endif %}" aria-label="Épingler">📌</button>
+        </form>
+        <form method="post" action="{% url 'chat:conversation_fork' item.obj.pk %}" class="inline">
+          {% csrf_token %}
+          <button class="msg-action" data-tip="Fork : nouvelle conversation depuis ici" aria-label="Fork">⑂</button>
+        </form>
+        <button type="button" class="msg-action" data-tip="Ouvrir en Canvas" onclick="openCanvas({{ item.obj.pk }})" aria-label="Canvas">📝</button>
+        <span x-data="{ retryOpen: false }" @click.outside="retryOpen = false" class="relative inline">
+          <button type="button" class="msg-action" data-tip="Rejouer avec un autre modèle (comparo A-B)" @click="retryOpen = !retryOpen" aria-label="Rejouer avec" aria-haspopup="true" :aria-expanded="retryOpen">⇄</button>
+          <span x-show="retryOpen" class="absolute left-0 mt-1 z-20 bg-white border border-[#e5e5e5] rounded-xl shadow-xl p-2 w-64 max-h-64 overflow-y-auto text-xs">
+            {% for p in providers %}{% for m in p.cached_models.all %}
+            <form method="post" action="{% url 'chat:message_retry_with' item.obj.pk %}" hx-post="{% url 'chat:message_retry_with' item.obj.pk %}" hx-target="#thread" hx-swap="innerHTML" hx-indicator="#regen-indicator" hx-disabled-elt="find button" @submit="retryOpen = false" class="block">
+              {% csrf_token %}
+              <input type="hidden" name="provider_id" value="{{ p.pk }}"><input type="hidden" name="model_id" value="{{ m.model_id }}">
+              <button class="w-full text-left px-2 py-1.5 rounded-lg hover:bg-[#f4f4f4] truncate" title="{{ p.name }} / {{ m.model_id }}">{{ p.name }} / {{ m.model_id }}</button>
+            </form>
+            {% endfor %}{% endfor %}
+          </span>
+        </span>
         <button type="button" class="msg-action" data-tip="Mail court Outlook — régénéré à chaque clic" aria-label="Régénérer un mail court pour Outlook" data-url="{% url 'chat:newsletter_channel' item.obj.pk 'mailto' %}" onclick="postNewsletterMailto(this)" title="Régénère un mail court (texte brut) et ouvre Outlook">✉️</button>
         <button type="button" class="msg-action" data-tip="HTML riche — régénéré à chaque clic, copié pour Outlook" aria-label="Régénérer le HTML riche et le copier" data-url="{% url 'chat:newsletter_channel' item.obj.pk 'html' %}" onclick="postNewsletterHTML(this)" title="Régénère le HTML riche et le copie (à coller dans Outlook)">🌐</button>
         <button type="button" class="msg-action" data-tip=".eml complet — régénéré à chaque clic" aria-label="Régénérer le .eml complet" data-url="{% url 'chat:newsletter_channel' item.obj.pk 'eml' %}" onclick="postNewsletterEML(this)" title="Régénère le .eml complet (double-clic vers Outlook)">📎</button>
@@ -94,5 +127,24 @@
 {% empty %}
 <div class="text-center text-[#6e6e6e] mt-10">Aucun message. Ajoutez un provider (⚙️ Providers → Actualiser), choisissez le modèle, puis écrivez ci-dessous.</div>
 {% endfor %}
+{% if followups %}
+<div class="flex flex-wrap gap-1.5 pt-2" id="followups">
+  {% for f in followups %}<button type="button" class="px-2.5 py-1.5 rounded-full border border-[#e5e5e5] text-xs hover:bg-[#f4f4f4]" onclick="fillComposer(this)" data-text="{{ f|escape }}">{{ f }}</button>{% endfor %}
 </div>
-<script>if (window.hljs) hljs.highlightAll();</script>
+{% endif %}
+</div>
+<div id="selection-toolbar" class="fixed z-40 hidden gap-1 bg-ink text-white text-xs rounded-xl shadow-xl p-1" role="toolbar" aria-label="Actions sur la sélection">
+  <button type="button" data-act="expliquer" class="px-2 py-1.5 rounded-lg hover:bg-white/10">Expliquer</button>
+  <button type="button" data-act="reformuler" class="px-2 py-1.5 rounded-lg hover:bg-white/10">Reformuler</button>
+  <button type="button" data-act="traduire" class="px-2 py-1.5 rounded-lg hover:bg-white/10">Traduire</button>
+  <button type="button" data-act="question" class="px-2 py-1.5 rounded-lg hover:bg-white/10">Question ▸</button>
+</div>
+<script>
+(function () {
+  // Ciblé : seuls les blocs non encore colorés (coût constant par swap).
+  if (window.hljs) document.querySelectorAll('#thread pre code:not([data-hl])').forEach(function (b) {
+    try { window.hljs.highlightElement(b); b.dataset.hl = '1'; } catch (e) {}
+  });
+  if (window.bindSelectionToolbar) window.bindSelectionToolbar();
+})();
+</script>

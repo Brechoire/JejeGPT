@@ -19,3 +19,4 @@ media/
 .ruff_cache/
 .opencode/node_modules/
 .opencode/plans/
+node_modules/

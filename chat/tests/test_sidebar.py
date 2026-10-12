@@ -59,12 +59,18 @@ def test_settings_sidebar_se_replie_entierement():
 
 
 def test_page_sans_theme_creme_police_systeme():
+    from pathlib import Path
+
+    from django.conf import settings
+
     conv = Conversation.objects.create(title="T")
     html = Client().get(f"/{conv.pk}/").content.decode()
     assert "bg-cream" not in html
     assert "family=Roboto" in html  # police Roboto chargée
     assert "family=Inter" not in html
-    assert "BlinkMacSystemFont" in html  # repli système conservé
+    # Pile système repliée dans le CSS Tailwind précompilé (plus de config inline).
+    css = (Path(settings.BASE_DIR) / "static" / "css" / "tailwind.css").read_text(encoding="utf-8")
+    assert "BlinkMacSystemFont" in css
     assert 'class="bg-white text-ink font-sans h-screen"' in html
 
 

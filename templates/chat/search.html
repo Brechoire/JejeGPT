@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Recherche — JejeGPT{% endblock %}
+{% block body %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+  <a href="/" class="text-sm text-[#6e6e6e] hover:underline">← Retour</a>
+  <h1 class="text-2xl font-medium mt-2 mb-4">🔍 Recherche</h1>
+  <form method="get" action="{% url 'chat:global_search' %}" class="flex gap-2">
+    <input name="q" value="{{ query }}" placeholder="Titre ou contenu… (2 lettres min)" class="flex-1 border border-[#e5e5e5] rounded-xl px-3 py-2">
+    <button class="px-4 py-2 rounded-xl bg-ink text-white">Chercher</button>
+  </form>
+  {% if query %}
+  <h2 class="font-medium mt-6 mb-2">Conversations ({{ found_convs|length }})</h2>
+  <ul class="space-y-1">
+    {% for c in found_convs %}<li><a class="text-sm hover:underline" href="{{ c.get_absolute_url }}">💬 {{ c.title }}</a></li>{% empty %}<li class="text-sm text-[#6e6e6e]">Aucune.</li>{% endfor %}
+  </ul>
+  <h2 class="font-medium mt-6 mb-2">Messages ({{ results|length }})</h2>
+  <ul class="space-y-2">
+    {% for m in results %}
+    <li class="border border-[#e5e5e5] rounded-xl p-3 text-sm">
+      <a class="font-medium hover:underline" href="{{ m.conversation.get_absolute_url }}#msg-{{ m.pk }}">{{ m.conversation.title }} {% if m.pinned %}📌{% endif %}</a>
+      <p class="text-[#424242] mt-1 whitespace-pre-wrap">{{ m.content|truncatechars:300 }}</p>
+    </li>
+    {% empty %}<li class="text-sm text-[#6e6e6e]">Aucun.</li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endblock %}

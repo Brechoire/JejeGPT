@@ -1,0 +1,12 @@
+{
+  "name": "jejegpt",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Build CSS Tailwind précompilé (devDependency uniquement, aucun JS runtime).",
+  "scripts": {
+    "build:css": "tailwindcss -i ./static/css/input.css -o ./static/css/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

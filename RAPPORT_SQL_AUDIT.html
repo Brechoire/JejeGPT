@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit SQL — JejeGPT · Rapport complet</title>
+<style>
+:root{
+  --bg:#0f172a; --bg2:#111c33; --card:#16213a; --card2:#1b2947;
+  --ink:#e8eefc; --muted:#9fb0cc; --line:#2a3a5e;
+  --crit:#ff5d5d; --high:#ff9f43; --med:#ffd32a; --low:#3ddc84; --info:#5aa9ff;
+  --accent:#7c6cff; --accent2:#00d4ff;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;background:linear-gradient(180deg,var(--bg),#0a1120);color:var(--ink)}
+a{color:var(--accent2)}
+header.hero{padding:38px 24px 22px;border-bottom:1px solid var(--line);background:radial-gradient(900px 300px at 20% -10%,#2b3a7a55,transparent),radial-gradient(800px 260px at 85% 0%,#00d4ff22,transparent)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+.badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.4px;border:1px solid var(--line);background:#ffffff10}
+.badge.sqlite{background:#3ddc8422;border-color:#3ddc8455}
+.badge.orm{background:#7c6cff22;border-color:#7c6cff66}
+.badge.noraw{background:#00d4ff1a;border-color:#00d4ff55}
+h1{margin:10px 0 6px;font-size:30px}
+.sub{color:var(--muted);margin:0 0 14px}
+.meta{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 0}
+.toolbar{position:sticky;top:0;z-index:20;background:#0d152acc;backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:12px 0}
+.toolbar .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input[type=search],select{background:#0b1328;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 12px;min-width:220px}
+.btn{border:1px solid var(--line);background:#ffffff0d;color:var(--ink);padding:8px 13px;border-radius:999px;cursor:pointer;font-weight:600}
+.btn.active{background:linear-gradient(90deg,var(--accent),var(--accent2));color:#081020;border-color:transparent}
+.btn:hover{filter:brightness(1.1)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}
+.kpi{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:14px;padding:14px}
+.kpi b{font-size:26px;display:block}
+.kpi span{color:var(--muted);font-size:13px}
+.top5{background:#ffd32a0d;border:1px solid #ffd32a44;border-radius:14px;padding:16px;margin:16px 0}
+.top5 ol{margin:8px 0 0 20px}
+section{margin:26px 0}
+h2{font-size:22px;margin:26px 0 10px;border-left:5px solid var(--accent);padding-left:10px}
+h3{color:var(--muted);font-size:14px;text-transform:uppercase;letter-spacing:1px}
+.card{background:linear-gradient(180deg,var(--card),#131e36);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0}
+.card h4{margin:0 0 6px;font-size:17px}
+.sev{font-size:12px;font-weight:800;padding:4px 10px;border-radius:999px;display:inline-block;margin-right:8px}
+.CRITICAL{background:#ff5d5d;color:#fff}
+.HIGH{background:#ff9f43;color:#201000}
+.MEDIUM{background:#ffd32a;color:#201a00}
+.LOW{background:#3ddc84;color:#06240f}
+.INFO{background:#5aa9ff;color:#06182e}
+.id{font-family:Consolas,monospace;background:#00000055;border:1px solid var(--line);padding:2px 8px;border-radius:8px;font-size:12px}
+.file{font-family:Consolas,monospace;color:#9fe8ff;font-size:13px}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:8px;margin:10px 0}
+.kv dt{color:var(--muted);font-weight:700}
+.kv dd{margin:0}
+pre{background:#070d1e;border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;font-size:12.5px;line-height:1.5}
+code{font-family:Consolas,Menlo,monospace}
+.impact{border-left:4px solid var(--high);padding-left:10px;color:#ffe1c2}
+.correct{border-left:4px solid var(--low);padding-left:10px}
+.risk{border-left:4px solid var(--crit);padding-left:10px;color:#ffc9c9}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{border:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}
+th{background:#ffffff0a;cursor:pointer}
+tr:hover td{background:#ffffff06}
+footer{color:var(--muted);padding:30px 0 60px;font-size:13px}
+@media print{.toolbar{display:none}body{background:#fff;color:#000}.card,.kpi,.top5{break-inside:avoid}}
+</style>
+</head>
+<body>
+<header class="hero">
+<div class="wrap">
+<span class="badge">AUDIT SQL · JejeGPT</span>
+<span class="badge sqlite">SGBD réel : SQLite (django.db.backends.sqlite3)</span>
+<span class="badge orm">100 % ORM Django — aucun SQL brut</span>
+<span class="badge noraw">0 × .raw() · 0 × RawSQL · 0 × cursor().execute · 0 × RunSQL</span>
+<h1>Rapport complet — toutes les requêtes SQL</h1>
+<p class="sub">Chaque problème a sa solution + répercussions si mal corrigée. Tri par priorité, filtres par sévérité, vérifications <code>EXPLAIN QUERY PLAN</code> (SQLite) et gardes destructives.</p>
+<div class="meta">
+<span class="badge">16 modèles · 0 Meta.indexes · 1 UNIQUE (provider,model_id)</span>
+<span class="badge">Date : 29/09/2026</span>
+<span class="badge">Réf : PostgreSQL par défaut → adapté à SQLite réel</span>
+</div>
+</div>
+</header>
+
+<div class="toolbar"><div class="wrap"><div class="row">
+<input type="search" id="q" placeholder="Rechercher : fichier, ID, mot-clé… (ex. UsageRecord, N+1, sidebar)">
+<select id="sort"><option value="sev">Trier : Sévérité → ID</option><option value="id">Trier : ID (SQL-001…)</option><option value="file">Trier : Fichier</option></select>
+<button class="btn active" data-f="ALL">Tout (16)</button>
+<button class="btn" data-f="CRITICAL">Critical</button>
+<button class="btn" data-f="HIGH">High</button>
+<button class="btn" data-f="MEDIUM">Medium</button>
+<button class="btn" data-f="LOW">Low / Info</button>
+<button class="btn" id="btn-fixed">✅ Corrigés (12)</button>
+<button class="btn" id="expand">Tout déplier</button>
+<button class="btn" onclick="window.print()">Imprimer / PDF</button>
+</div></div></div>
+
+<div class="wrap">
+<div class="grid">
+<div class="kpi"><b style="color:var(--crit)">1</b><span>CRITICAL — DELETE massif sans garde</span></div>
+<div class="kpi"><b style="color:var(--high)">6</b><span>HIGH — N+1, sidebar, fork, clé API, export</span></div>
+<div class="kpi"><b style="color:var(--med)">6</b><span>MEDIUM — historique, search, migrations, sync, purge, TOCTOU</span></div>
+<div class="kpi"><b style="color:var(--low)">3</b><span>LOW/INFO — index socle, 1NF, ordering</span></div>
+</div>
+
+<div class="top5"><b>Top 5 actions prioritaires</b>
+<ol>
+<li><b>Sécuriser les destructifs</b> (SQL-001) — confirm serveur + <code>transaction.atomic()</code> + backup <code>db.sqlite3</code>.</li>
+<li><b>Plafonner UsageRecord</b> (SQL-003) — rétention + index <code>created_at</code>, sinon dégradation linéaire garantie.</li>
+<li><b>Corriger les 3 N+1</b> (SQL-002 data_export, SQL-004 scheduled_list, SQL-005 sidebar).</li>
+<li><b>Socle d'index Meta.indexes</b> (SQL-014) — une migration <code>0028_socle_index</code>, vérifiée par <code>EXPLAIN QUERY PLAN</code>.</li>
+<li><b>Fork + purge + sync par lots + transactionnels</b> (SQL-006, SQL-012, SQL-011).</li>
+</ol>
+</div>
+
+<div class="top5" style="background:#3ddc840d;border-color:#3ddc8455"><b>✅ Perf navigation + réponse (30/09/2026)</b>
+<br>Mesures de référence : TTFB <code>detail</code> 204 ms / 25 SQL (petit fil), Markdown ~30 ms + 9 ms/Ko <b>par message à chaque visite</b>, ~1,1 Mo de CDN dont ~800 Ko inutiles sur le chat (abcjs+tone).
+<br><b>Lot A (head)</b> : Tailwind précompilé commité (<code>static/css/tailwind.css</code>, 21,4 Ko, <code>npm run build:css</code> après ajout de classes — voir README) ; hljs/marked/purify → <code>detail</code> seul, abcjs/tone/score-viewer → démo partitions seule, via bloc <code>extra_head</code> ; <code>preconnect</code> CDN. Page chat : plus de Play CDN, ni abcjs/tone.
+<br><b>Lot B (TTFB)</b> : HTML Markdown mémorisé par message (clé = hash du contenu, invalidation automatique) → fil long 40 msgs : <b>952 ms → 92 ms</b> en 2e visite, byte-identique hors CSRF ; <code>AppSettings.get_cached()</code> 60 s avec invalidation au <code>save()</code> ; loader templates <code>cached</code> en prod (<code>DEBUG=0</code>) ; highlight ciblé (<code>highlightElement</code> + garde <code>data-hl</code>, fini le scan global par swap).
+<br><b>Lot C (CLS)</b> : <code>aspect-ratio: 16/10</code> sur galerie mobile + images solo (desktop déjà à hauteur fixe).
+<br><b>Vérification :</b> suite complète <b>427 passed</b> (dont 6 <code>test_perf_lots.py</code> + <code>conftest.py</code> vidant les caches entre tests — sinon le cache fuit d'un test à l'autre via rollback), <code>ruff check</code> OK (1 alerte pré-existante). Pièges trouvés : commentaires <code>{# #}</code> Django <b>mono-ligne uniquement</b> (un multiligne fuit en HTML et ses <code>{% %}</code> s'exécutent !) ; <code>conftest.py</code> ajouté. <b>Lot D (WAL, waitress) reporté</b> : local seul, aucun bénéfice immédiat.
+</div>
+
+<div class="top5" style="background:#3ddc840d;border-color:#3ddc8455"><b>✅ Fonctionnalité « Test Web » (29/09/2026)</b>
+<br>Demande utilisateur : prouver la navigation au lieu de la déclarer. Bouton <b>🌐 Tester</b> par ligne modèle (onglet Providers) + pastille verdict (<b>✅ navigue / ❌ ne navigue pas / ❓ incertain</b>, détail + date au survol) + badge <b>✅ testé</b> dans le picker. Sonde datée avec web forcé et <code>session_id</code> Go, vérification serveur des liens cités (HEAD→GET, garde SSRF, max 5) : succès exige ≥1 lien vérifié (anti-hallucination). <b>Cases effort/web/réflexion jamais modifiées auto</b> — suggestion textuelle seule en cas de contradiction. Migration <code>0029</code> (<code>web_test_status/detail/at</code>), <code>web_tested</code> ajouté à <code>ui_controls</code> (parité <code>model_controls</code> conservée).
+<br><b>Vérification :</b> suite complète <b>421 passed</b> (dont 13 <code>test_webtest.py</code>, réseau mocké), <code>makemigrations --check</code> propre, <code>ruff check</code> OK (2 alertes restantes pré-existantes : E501 <code>urls.py:25</code>, F401 <code>views.py:1127</code>). Incident annexe : renommage d'une migration déjà appliquée → <code>duplicate column</code>, résolu en restaurant le nom enregistré (ne jamais renommer une migration appliquée).</div>
+
+<div class="top5" style="background:#3ddc840d;border-color:#3ddc8455"><b>✅ Correctif incident Go 400 (hors audit, 29/09/2026)</b>
+<br>Logs « <code>memory extract failed</code> » (HTTP 400 <code>Request is missing x-opencode-session</code>) : <code>maybe_extract</code> (<code>chat/memory.py</code>) et <code>parse_schedule_request</code> (<code>chat/scheduler/parse.py</code>) étaient les 2 seuls appelants de <code>chat_complete</code> sans <code>session_id</code> → header absent → rejet Go. Ajout de <code>session_id=f"memory-{conv.pk}"</code> / <code>f"schedule-parse-{provider.pk}"</code> (tags dédiés, sémantique inchangée, échec toujours silencieux/non bloquant). Balayage des 9 autres appelants : tous OK.
+<br><b>Vérification :</b> suite complète <b>408 passed</b> (dont 3 nouveaux <code>test_session_header.py</code>), <code>ruff check</code> OK.</div>
+
+<div class="top5" style="background:#3ddc840d;border-color:#3ddc8455"><b>✅ Lot 1 appliqué — vérifié le 29/09/2026</b>
+<br>Corrigés sans changement fonctionnel : <b>SQL-001</b> (garde serveur + atomic), <b>SQL-002</b> (prefetch 2 requêtes, HttpResponse conservé — streaming reporté), <b>SQL-004</b> (prefetch sans slice + filet groupé 1 requête), <b>SQL-006</b> (bulk_create + atomic + DELETE direct), <b>SQL-008</b> (borne mémoire + <code>.only()</code>), <b>SQL-012</b> (aggregate + iterator). Restants : SQL-003 (rétention usage), SQL-005 (sidebar — audit templates requis avant <code>.only()</code>), SQL-011 (sync bulk — race à verrouiller), SQL-014 (migration index).
+<br><b>Vérification :</b> suite complète <b>394 passed</b> (dont 9 nouveaux <code>test_sql_lot1.py</code>), <code>ruff check</code> OK sur les fichiers touchés. <code>ruff format</code> non appliqué (écarts pré-existants sur tout le fichier — reformatage reporté pour garder un diff minimal).</div>
+
+<div class="top5" style="background:#3ddc840d;border-color:#3ddc8455"><b>✅ Lot 2 appliqué — vérifié le 29/09/2026</b>
+<br>Corrigés sans changement fonctionnel : <b>SQL-003</b> (commande <code>purge_usage [--apply]</code> + <code>JEJEGPT_USAGE_RETENTION_DAYS=180</code>, dry-run par défaut — le quota reste volontairement souple, cf. SQL-013), <b>SQL-005</b> (sidebar : <code>.only()</code> audité template par template + bornes 50/50 + prefetch <code>conversations</code> supprimé partout), <b>SQL-007</b> (<code>defer("api_key")</code> sur les 5 listes qui ne lisent jamais la clé ; <b>exclu</b> de l'onglet providers dont le template lit <code>p.api_key</code> — sinon N+1), <b>SQL-009</b> (<code>q[:80]</code> avant le <code>LEN>=2</code>), <b>SQL-011</b> (<code>bulk_create/bulk_update</code> + suppressions par lots de PK + repli <code>update_or_create</code> sur race), <b>SQL-014</b> (migration <code>0028_socle_index</code> : 18 index, <code>EXPLAIN QUERY PLAN → SEARCH USING INDEX</code> sur les 3 requêtes chaudes).
+<br><b>Vérification :</b> suite complète <b>405 passed</b> (dont 11 nouveaux <code>test_sql_lot2.py</code>), <code>makemigrations --check</code> propre, <code>ruff check</code> OK. Non migré / assumé : SQL-015 (CSV 1NF — 20 lignes max, prématuré), chiffrement <code>api_key</code> (rotation de clé requise d'abord).</div>
+
+<section><h2>Vue d'ensemble triable</h2>
+<table id="tbl"><thead><tr><th data-k="id">ID ⏷</th><th data-k="sev">Sévérité</th><th data-k="file">Fichier</th><th>Problème</th></tr></thead><tbody id="tbody"></tbody></table>
+</section>
+
+<section id="cards"><h2>Fiches détaillées — problème → solution → répercussion</h2>
+
+<div class="card" data-sev="CRITICAL" data-id="SQL-001" data-file="chat/views.py">
+<h4><span class="sev CRITICAL">CRITICAL</span> DELETE massif sans garde ni transaction <span class="id">SQL-001</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 1 — confirm serveur + atomic (template + test à jour)</span></h4>
+<div class="file">chat/views.py:1037-1040 data_clear · :508-516 project_conversations_delete · :364-378 conversation_delete</div>
+<dl class="kv"><dt>Problème</dt><dd><code>Conversation.objects.all().delete()</code> → <code>DELETE FROM chat_conversation</code> + cascades (messages, documents, attachments, usage_records, exports, scheduled_task). Aucun <code>SELECT COUNT(*)</code> préalable, aucune confirmation serveur, aucun backup, pas de <code>transaction.atomic()</code> explicite dans la vue.</dd>
+<dt>Impact</dt><dd class="impact">Perte irréversible de tout l'historique + fichiers orphelins si <code>post_delete</code> échoue. Sous SQLite : cascade chargée en mémoire → verrou DB long.</dd>
+<dt>Correction</dt><dd class="correct"><pre>-- Vérification avant :
+SELECT COUNT(*) FROM chat_conversation;
+SELECT COUNT(*) FROM chat_message;
+-- Vue gardée :
+from django.db import transaction
+if request.POST.get("confirm") != "SUPPRIMER":
+    messages.error(request, "Confirmation requise."); return redirect(...)
+with transaction.atomic():
+    Conversation.objects.all().delete()
+-- Backup : copie db.sqlite3 ou .dump avant.</pre></dd>
+<dt>Répercussion</dt><dd class="risk">Un simple confirm JS se contourne par curl → contrôle serveur obligatoire. Ne pas mettre <code>on_delete=PROTECT</code> partout : casserait les suppressions légitimes. Ne toucher qu'aux vues + backup.</dd></dl>
+</div>
+
+<div class="card" data-sev="HIGH" data-id="SQL-002" data-file="chat/views.py">
+<h4><span class="sev HIGH">HIGH</span> data_export : N+1 + chargement intégral <span class="id">SQL-002</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 1 — prefetch 2 requêtes, HttpResponse conservé</span></h4>
+<div class="file">chat/views.py:1017-1034</div>
+<dl class="kv"><dt>Problème</dt><dd><code>for c in Conversation.objects.all(): for m in c.messages.all()</code> → 1 + N requêtes en <code>SELECT *</code> (content/reasoning/error TEXT inutiles), puis <code>json.dumps</code> d'un coup.</dd>
+<dt>Impact</dt><dd class="impact">N requêtes, pic mémoire, timeout HTTP sur gros volumes.</dd>
+<dt>Correction</dt><dd class="correct"><pre>from django.db.models import Prefetch
+qs = Conversation.objects.only("id","title","model_id","temperature").order_by("id").prefetch_related(
+  Prefetch("messages", queryset=Message.objects.only("role","content","created_at").order_by("id")))
+# + StreamingHttpResponse générateur JSON au lieu de HttpResponse(json.dumps(payload))</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>.only()</code> hors sérialisation fermée = requêtes différées si un template touche un champ exclu. Réserver <code>.only()</code> à data_export ; le streaming change Content-Length → ajuster les tests sur <code>response.content</code>.</dd></dl>
+</div>
+
+<div class="card" data-sev="HIGH" data-id="SQL-003" data-file="chat/views.py">
+<h4><span class="sev HIGH">HIGH</span> UsageRecord jamais purgé + 7 agrégations full scan <span class="id">SQL-003</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 2 — purge_usage + index usage_created</span></h4>
+<div class="file">chat/models.py:274-297 · chat/views.py:886-982 _usage_ctx · chat/exports/core.py:33-36</div>
+<dl class="kv"><dt>Problème</dt><dd>« Jamais purgé (V1) » + 7 requêtes / page Utilisation (<code>COUNT/SUM/AVG</code>, <code>GROUP BY model_id</code>, <code>TruncDate</code>, <code>ExtractHour</code>, top convs, feedback) toutes filtrées sur <code>created_at__gte</code> sans index. <code>check_quota()</code> refait <code>SUM(size)</code> à chaque export.</dd>
+<dt>Impact</dt><dd class="impact">Croissance infinie → chaque page + chaque export ralentit linéairement. Verrou lecture longue sous SQLite.</dd>
+<dt>Correction</dt><dd class="correct"><pre>-- Index : voir SQL-014 (usage_created, usage_conv_created, usage_model)
+-- Rétention par lot :
+DELETE FROM chat_usagerecord WHERE created_at &lt; %s LIMIT 1000; -- boucler
+-- Vérif : EXPLAIN QUERY PLAN SELECT COUNT(*) FROM chat_usagerecord WHERE created_at &gt;= '2026-08-01';</pre></dd>
+<dt>Répercussion</dt><dd class="risk">Purger casse heatmap 22 semaines + top convs → annoncer la rétention en UI + archiver un agrégat mensuel avant purge si besoin métier.</dd></dl>
+</div>
+
+<div class="card" data-sev="HIGH" data-id="SQL-004" data-file="chat/views.py">
+<h4><span class="sev HIGH">HIGH</span> scheduled_list : N+1 runs par tâche <span class="id">SQL-004</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 1 — prefetch sans slice + filet groupé</span></h4>
+<div class="file">chat/views.py:1217-1230</div>
+<dl class="kv"><dt>Problème</dt><dd>1 requête tasks OK, puis <code>task.runs.order_by(-created_at)[:5]</code> (+1/tâche) et <code>task.runs.filter(success=False).first()</code> (+1 si échecs). ~40 requêtes pour 20 tâches.</dd>
+<dt>Impact</dt><dd class="impact">Page Planifiées lente, charge DB inutile.</dd>
+<dt>Correction</dt><dd class="correct"><pre>from django.db.models import Prefetch
+tasks = ScheduledTask.objects.select_related("conversation").prefetch_related(
+  Prefetch("runs", queryset=ScheduledRun.objects.order_by("-created_at")[:5], to_attr="recent_pref"))
+# recent = task.recent_pref[:5] ; last_failure = next((r for r in recent if not r.success), None)</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>Prefetch([:5])</code> + <code>.filter()</code> dessus lève → utiliser l'attribut préchargé. Si le template lit <code>task.recent_runs</code>, l'assigner en Python depuis <code>recent_pref</code> dans la même vue.</dd></dl>
+</div>
+
+<div class="card" data-sev="HIGH" data-id="SQL-005" data-file="chat/views.py">
+<h4><span class="sev HIGH">HIGH</span> Sidebar charge toute la base à chaque page <span class="id">SQL-005</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 2 — .only() audité + 50/50 + prefetch supprimé</span></h4>
+<div class="file">chat/views.py:281-299 _sidebar_ctx (appelée par detail, project_detail, assistant_*, scheduled, settings, search…)</div>
+<dl class="kv"><dt>Problème</dt><dd><code>Conversation.objects.select_related(...).all()</code> en <code>SELECT *</code> (system_prompt TEXT…) sans LIMIT, déclinée en 2 requêtes recent/older + <code>Project.prefetch(conversations)</code> qui recharge tout + <code>Assistant.annotate(Count)</code> + <code>COUNT seen=False</code> → 5-6 requêtes lourdes / page.</dd>
+<dt>Impact</dt><dd class="impact">Transfert TEXT inutile, tris sans index sur <code>updated_at</code>.</dd>
+<dt>Correction</dt><dd class="correct"><pre>base = Conversation.objects.select_related("project","assistant").only("id","title","updated_at","project_id","assistant_id")
+recent = base.filter(updated_at__gte=cutoff).order_by("-updated_at")[:50]
+older  = base.filter(updated_at__lt=cutoff).order_by("-updated_at")[:50]
+Project.objects.annotate(conv_count=Count("conversations")).only("id","name")  # sans prefetch conversations</pre></dd>
+<dt>Répercussion</dt><dd class="risk">Auditer <code>sidebar*.html</code> avant <code>.only()</code> : tout champ affiché mais exclu = 1 requête différée / ligne (pire). Le <code>[:50]</code> tronque l'UX → renvoyer vers <code>global_search</code> existant.</dd></dl>
+</div>
+
+<div class="card" data-sev="HIGH" data-id="SQL-006" data-file="chat/views.py">
+<h4><span class="sev HIGH">HIGH</span> Fork N INSERT sans transaction + _delete_following inutile <span class="id">SQL-006</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 1 — bulk_create + atomic + DELETE direct</span></h4>
+<div class="file">chat/views.py:2028-2050 conversation_fork · :1819-1821 _delete_following · :1841-1855 _regen_anchor</div>
+<dl class="kv"><dt>Problème</dt><dd><code>list(messages.order_by...)</code> complet puis <code>create()</code> par message (N INSERT), sans <code>atomic()</code> → fork partiel si crash. <code>_delete_following</code> charge tous les IDs puis <code>DELETE WHERE id IN (liste)</code>.</dd>
+<dt>Impact</dt><dd class="impact">Fork long = N+1 écritures, risque d'historique tronqué.</dd>
+<dt>Correction</dt><dd class="correct"><pre>with transaction.atomic():
+    msgs = list(src.messages.only("role","content","reasoning","model_label").order_by("created_at","id")[:idx+1])
+    Message.objects.bulk_create([Message(conversation=fork, role=m.role, ...) for m in msgs], batch_size=500)
+# delete direct :
+conv.messages.filter(Q(created_at__gt=m.created_at)|Q(created_at=m.created_at, id__gt=m.id)).delete()</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>bulk_create</code> n'appelle pas <code>save()</code>/signaux et ne renvoie pas toujours les PK (vieux SQLite) — OK pour Message (aucun signal), interdit pour Export (signal fichier). Tester avec <code>test_regenerate.py</code>.</dd></dl>
+</div>
+
+<div class="card" data-sev="HIGH" data-id="SQL-007" data-file="chat/models.py">
+<h4><span class="sev HIGH">HIGH</span> api_key en clair + delete provider perd les caps <span class="id">SQL-007</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ PARTIEL Lot 2 — defer() sauf onglet providers ; chiffrement reporté</span></h4>
+<div class="file">chat/models.py:14-32 · chat/views.py:788-791</div>
+<dl class="kv"><dt>Problème</dt><dd><code>api_key CharField(500)</code> en clair, lue à chaque <code>select_related providers</code>. <code>provider.delete()</code> → SET_NULL conversations mais CASCADE cached_models → perte des réglages manuels effort/web/thinking.</dd>
+<dt>Impact</dt><dd class="impact">Dump/backup expose les clés ; suppression = perte silencieuse des caps.</dd>
+<dt>Correction</dt><dd class="correct"><pre># Court terme : Provider.objects.defer("api_key") partout sauf chat_complete/sync
+# + UI : "Supprimer aussi N modèles ?" via SELECT COUNT(*) FROM chat_llmmodel WHERE provider_id=?
+# Long terme : Fernet / django-encrypted-model-fields + rotation.</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>.defer()</code> dans le chemin chaud LLM = +1 requête / appel → ne l'appliquer qu'aux listes UI. Ne pas chiffrer sans gestion de clé (.env, rotation) sous peine de perdre l'accès providers.</dd></dl>
+</div>
+
+<div class="card" data-sev="MEDIUM" data-id="SQL-008" data-file="chat/views.py">
+<h4><span class="sev MEDIUM">MEDIUM</span> _history : SELECT * de tout l'historique à chaque appel LLM <span class="id">SQL-008</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 1 — .only() + borne mémoire MAX_FACTS</span></h4>
+<div class="file">chat/views.py:36-59 · :1630 · :1906 · :1998</div>
+<dl class="kv"><dt>Problème</dt><dd><code>conv.messages.all()</code> sans <code>.only()</code> ni limite, puis 2-3 requêtes <code>filter(role).last()/first()</code> pour mémoire/images/export.</dd>
+<dt>Impact</dt><dd class="impact">Contexte énorme, latence + coût tokens, transfert reasoning/error/pinned inutile.</dd>
+<dt>Correction</dt><dd class="correct"><pre>msgs = conv.messages.only("role","content").order_by("created_at","id")  # + borne N derniers (ex. 100, configurable JEJEGPT_HISTORY_MAX_MESSAGES)
+# Factoriser : 1 fetch last_user/last_assistant dans _generate_reply, passé aux hooks.</pre></dd>
+<dt>Répercussion</dt><dd class="risk">Tronquer change les réponses LLM → borne large par défaut + test non-régression sur <code>_history</code>. <code>.only()</code> garde toujours la PK — OK.</dd></dl>
+</div>
+
+<div class="card" data-sev="MEDIUM" data-id="SQL-009" data-file="chat/views.py">
+<h4><span class="sev MEDIUM">MEDIUM</span> global_search : LIKE '%q%' full scan <span class="id">SQL-009</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 2 — q borné à 80 ; FTS reporté (volume)</span></h4>
+<div class="file">chat/views.py:2115-2132</div>
+<dl class="kv"><dt>Problème</dt><dd><code>title__icontains / content__icontains</code> → <code>LIKE '%q%'</code> non indexable, full scan de <code>content TEXT</code>. q non borné.</dd>
+<dt>Impact</dt><dd class="impact">OK en petit SQLite, catastrophique à 100k messages / PG sans trigram.</dd>
+<dt>Correction</dt><dd class="correct"><pre>q = q[:80]  # avant len(q)&gt;=2 ; garder LIKE. PG futur : pg_trgm GIN / tsvector. SQLite : FTS5 si besoin.
+# Vérif : EXPLAIN QUERY PLAN SELECT ... WHERE content LIKE '%abc%'; → SCAN attendu.</pre></dd>
+<dt>Répercussion</dt><dd class="risk">FTS/trigram change la sémantique (accents, stop-words) + exige table/trigger → ne pas faire avant que le volume l'exige. Ne pas indexer <code>content</code> en B-tree (inutile pour <code>%q%</code>).</dd></dl>
+</div>
+
+<div class="card" data-sev="MEDIUM" data-id="SQL-010" data-file="chat/migrations">
+<h4><span class="sev MEDIUM">MEDIUM</span> Migrations : boucle ligne-à-ligne + import vivant <span class="id">SQL-010</span></h4>
+<div class="file">chat/migrations/0003_llmmodel_route.py:7-15 · 0007_backfill_web.py · 0002/0013/0019/0023/0024 seeds</div>
+<dl class="kv"><dt>Problème</dt><dd>0003 : <code>for m in ...all(): m.save()</code> (N UPDATE) + <code>from chat.providers import lookup_route</code> → rejoue différemment demain si la table statique change. 0007 fait bien <code>.update()</code> — incohérence.</dd>
+<dt>Impact</dt><dd class="impact">Migrations lentes + non-reproductibles.</dd>
+<dt>Correction</dt><dd class="correct"><pre># Pour les prochaines : constantes DUPLIQUÉES dans le fichier, apps.get_model, .update() par lot.
+LLMModel.objects.filter(route="", model_id__in=[...]).update(route="responses")</pre></dd>
+<dt>Répercussion</dt><dd class="risk">Ne jamais réécrire 0003 appliquée (table <code>django_migrations</code> + conflits). Règle pour les nouvelles migrations uniquement.</dd></dl>
+</div>
+
+<div class="card" data-sev="MEDIUM" data-id="SQL-011" data-file="chat/providers.py">
+<h4><span class="sev MEDIUM">MEDIUM</span> sync_models : N update_or_create + NOT IN géant <span class="id">SQL-011</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 2 — bulk + lots PK + repli race</span></h4>
+<div class="file">chat/providers.py:500-543</div>
+<dl class="kv"><dt>Problème</dt><dd><code>update_or_create</code> par modèle (~400 requêtes / 200 modèles) + <code>exclude(model_id__in=ids).delete()</code> (limite 999 variables SQLite) + <code>provider.save()</code> complet.</dd>
+<dt>Impact</dt><dd class="impact">Sync lente, risque <code>too many SQL variables</code>.</dd>
+<dt>Correction</dt><dd class="correct"><pre>existing = {m.model_id:m for m in provider.cached_models.only("id","model_id")}
+bulk_create(nouveaux, batch_size=500) ; bulk_update(caps) ; delete par chunks pk__in 500
+provider.save(update_fields=["last_fetch_at","last_error","updated_at"])</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>bulk_create</code> non race-safe (double-clic Actualiser → UniqueViolation sur <code>uniq_provider_model</code>) → garder <code>update_or_create</code> si concurrence possible OU verrou <code>select_for_update</code> (PG futur, sans effet SQLite).</dd></dl>
+</div>
+
+<div class="card" data-sev="MEDIUM" data-id="SQL-012" data-file="chat/management/commands">
+<h4><span class="sev MEDIUM">MEDIUM</span> purge_exports : tout en mémoire + 4 scans <span class="id">SQL-012</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 1 — aggregate + iterator + aperçu borné</span></h4>
+<div class="file">chat/management/commands/purge_exports.py:18-37</div>
+<dl class="kv"><dt>Problème</dt><dd><code>sum(e.size for e in old)</code> instancie tous les vieux exports + <code>exists()+count()+boucle+delete()</code> = 4-5 passages.</dd>
+<dt>Impact</dt><dd class="impact">OOM si milliers d'exports, verrou long.</dd>
+<dt>Correction</dt><dd class="correct"><pre>stats = old.aggregate(n=Count("id"), total=Sum("size"))
+for e in old.only("id","file","file_name","size").iterator(chunk_size=500):
+    e.file.delete(save=False)
+old.delete()  # + index exp_created (SQL-014)</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>iterator()</code> puis <code>delete()</code> réévalue le queryset — OK. Ne pas passer à <code>e.delete()</code> unitaire (N DELETE + N signaux) sauf si nettoyage fichier l'exige — ici la boucle file + 1 delete suffit.</dd></dl>
+</div>
+
+<div class="card" data-sev="MEDIUM" data-id="SQL-013" data-file="chat/views.py">
+<h4><span class="sev MEDIUM">MEDIUM</span> TOCTOU : duplicate / get_or_create / quota / singleton <span class="id">SQL-013</span></h4>
+<div class="file">chat/views.py:638-655 · :477 · :1004 AppSettings.get_solo · chat/exports/core.py:33-36</div>
+<dl class="kv"><dt>Problème</dt><dd><code>while exists(): create()</code>, <code>get_or_create(name)</code>, <code>check SUM puis INSERT</code>, <code>get_or_create(pk=1)</code> — fenêtres de race → 500 UniqueViolation, dépassement quota, singleton dupliqué.</dd>
+<dt>Impact</dt><dd class="impact">Erreurs sporadiques, quota souple dépassé.</dd>
+<dt>Correction</dt><dd class="correct"><pre>with transaction.atomic():
+    try: Assistant.objects.create(name=name, ...)
+    except IntegrityError: name = f"{base} {suffix}"; retry 1 fois
+# quota : documenté souple sous SQLite (écritures sérialisées) ; FOR UPDATE seulement sous PG futur.</pre></dd>
+<dt>Répercussion</dt><dd class="risk"><code>select_for_update()</code> hors transaction lève + sans effet SQLite → ne verrouiller que sous PG. Garder l'erreur « existe déjà » pour create (voulue), retry seulement pour duplicate.</dd></dl>
+</div>
+
+<div class="card" data-sev="LOW" data-id="SQL-014" data-file="chat/models.py">
+<h4><span class="sev LOW">LOW</span> Socle d'index manquant — migration 0028 <span class="id">SQL-014</span> <span class="badge" style="background:#3ddc8422;border-color:#3ddc8455">✅ CORRIGÉ Lot 2 — 0028_socle_index appliquée, EXPLAIN OK</span></h4>
+<div class="file">chat/models.py (tous les Meta) → migration <code>0028_socle_index</code> à créer</div>
+<dl class="kv"><dt>Problème</dt><dd>0 <code>Meta.indexes</code>. Tous les ORDER BY / filtres (conversation_id, created_at, updated_at, next_run, seen…) font tri/scan. Django indexe les FK seules, pas les (FK+tri).</dd>
+<dt>Impact</dt><dd class="impact">Tris systématiques à chaque page.</dd>
+<dt>Correction</dt><dd class="correct"><pre>Message: (conversation,created_at,id) (conversation,role) (pinned,created_at) (created_at)
+Conversation: (-updated_at) (project,-updated_at) (assistant)
+UsageRecord: (created_at) (conversation,created_at) (model_id)
+ScheduledTask: (enabled,next_run) · ScheduledRun: (task,-created_at) (seen)
+Export: (message,-created_at) (created_at) · MemoryFact: (active,-created_at) · DeepResearchRun: (source,status)
+# Vérif : EXPLAIN QUERY PLAN ... → SEARCH USING INDEX (avant : SCAN + TEMP B-TREE)</pre></dd>
+<dt>Répercussion</dt><dd class="risk">Chaque index coûte en écriture + taille db.sqlite3 — ici 1-2 INSERT/réponse vs lectures à chaque page → largement rentable. Une seule migration (rollback : <code>migrate chat 0027</code>). PG futur : <code>CONCURRENTLY</code> hors migration standard.</dd></dl>
+</div>
+
+<div class="card" data-sev="LOW" data-id="SQL-015" data-file="chat/models.py">
+<h4><span class="sev LOW">LOW</span> days/sites TEXT CSV : violation 1NF assumée <span class="id">SQL-015</span></h4>
+<div class="file">chat/models.py:323 days · :352 sites</div>
+<dl class="kv"><dt>Problème</dt><dd>Jours « 1,3 » + domaines « a.fr\nb.fr » en texte, parsés Python. Non requêtable (« tâches du lundi » impossible en SQL).</dd>
+<dt>Impact</dt><dd class="impact">Pas d'index/contrainte, données sales possibles — volume ≤20 tâches, impact nul.</dd>
+<dt>Correction</dt><dd class="correct">Garder en V1 (MAX_TASKS=20). Futur : tables <code>ScheduledTaskDay(task,weekday)</code> + <code>ScheduledTaskSite(task,domain)</code>.</dd>
+<dt>Répercussion</dt><dd class="risk">Normaliser maintenant = réécrire scheduler/parse/templates/tests pour 20 lignes — prématuré. Ne pas toucher.</dd></dl>
+</div>
+
+<div class="card" data-sev="LOW" data-id="SQL-016" data-file="chat/models.py">
+<h4><span class="sev LOW">LOW</span> ordering implicite = ORDER BY caché partout <span class="id">SQL-016</span></h4>
+<div class="file">chat/models.py (toutes les Meta.ordering)</div>
+<dl class="kv"><dt>Problème</dt><dd>Chaque <code>.first()/.last()</code> ajoute <code>ORDER BY</code>. <code>conv.save()</code> (auto_now) bump <code>updated_at</code> à chaque réponse → remonte en sidebar + rebascule recent/older.</dd>
+<dt>Impact</dt><dd class="impact">Tris systématiques, sidebar instable.</dd>
+<dt>Correction</dt><dd class="correct">Garder les ordering (tests + templates en dépendent) + index SQL-014. <code>conv.save(update_fields=["updated_at"])</code> quand c'est le seul but.</dd>
+<dt>Répercussion</dt><dd class="risk">Retirer les ordering = ordre indéfini sous PG + casse <code>test_ordering_and_cascade</code>. Ne pas retirer.</dd></dl>
+</div>
+
+</section>
+
+<section><h2>Sécurité &amp; migrations — rappel</h2>
+<div class="card" data-sev="INFO" data-id="SEC" data-file="global"><h4><span class="sev INFO">INFO</span> Sécurité : aucune injection, destructifs à garder, clés à defer</h4>
+<p>✅ Aucune concaténation SQL. <code>icontains</code> paramétré. SSRF trigger bien bloqué (<code>trigger_url_allowed</code>). 🔴 Garder les DELETE (SQL-001). 🟠 <code>api_key</code> en clair → <code>defer()</code> d'abord (SQL-007). Données : <code>data_export</code> sans auth (assumé local-first — documenter si exposition réseau).</p></div>
+<div class="card" data-sev="INFO" data-id="MIG" data-file="chat/migrations"><h4><span class="sev INFO">INFO</span> Migrations : DDL propre, seeds OK, 1 règle pour la suite</h4>
+<p>0001/0006/0008/0010/0012/0015/0016/0022/0027 : DDL pur ✅. 0007 <code>.update()</code> exemplaire ✅. Règle : plus jamais d'<code>import chat.providers</code> dans une migration (SQL-010). Prochaine : <code>0028_socle_index</code> (SQL-014).</p></div>
+</section>
+
+<section><h2>Recommandations — lots</h2>
+<div class="card"><b>Lot 1 — sans migration :</b> SQL-004 prefetch · SQL-002 streaming · SQL-001 confirm+atomic · SQL-008 <code>[:50]</code> · SQL-012 iterator · SQL-006 bulk+atomic.<br><b>Lot 2 — migration 0028 :</b> SQL-014, <code>makemigrations+migrate</code>, EXPLAIN avant/après.<br><b>Lot 3 — données :</b> rétention UsageRecord + quota documenté souple.<br><br><b>Non vérifié :</b> volumétrie réelle (<code>SELECT COUNT(*)</code>), EXPLAIN sur db.sqlite3 prod, champs exacts des templates sidebar (requis avant <code>.only()</code>), PG futur (DDL Django portables, re-tester <code>iterator/bulk</code>).</div></section>
+</div>
+
+<footer><div class="wrap">Audit SQL JejeGPT — SQLite réel (<code>config/settings.py:95-100</code>), 100 % ORM. Commandes : <code>EXPLAIN QUERY PLAN …</code> · <code>str(qs.query)</code> · garde <code>SELECT COUNT(*)</code> + <code>BEGIN; … ROLLBACK/COMMIT;</code> avant tout destructif.</div></footer>
+
+<script>
+const order={CRITICAL:0,HIGH:1,MEDIUM:2,LOW:3,INFO:4};
+const cards=[...document.querySelectorAll('#cards .card')];
+const tbody=document.getElementById('tbody');
+function render(){
+  const f=document.querySelector('.btn.active')?.dataset.f||'ALL';
+  const q=(document.getElementById('q').value||'').toLowerCase();
+  const s=document.getElementById('sort').value;
+  let list=cards.filter(c=>{
+    const sev=c.dataset.sev, id=c.dataset.id.toLowerCase(), file=c.dataset.file.toLowerCase(), txt=c.innerText.toLowerCase();
+    return (f==='ALL'||sev===f||(f==='LOW'&&(sev==='LOW'||sev==='INFO'))) && (!q||id.includes(q)||file.includes(q)||txt.includes(q));
+  });
+  list.sort((a,b)=> s==='id'?a.dataset.id.localeCompare(b.dataset.id) : s==='file'?a.dataset.file.localeCompare(b.dataset.file) : (order[a.dataset.sev]-order[b.dataset.sev]||a.dataset.id.localeCompare(b.dataset.id)));
+  cards.forEach(c=>c.style.display='none');
+  list.forEach(c=>c.style.display='');
+  tbody.innerHTML=list.map(c=>`<tr><td><span class="id">${c.dataset.id}</span></td><td><span class="sev ${c.dataset.sev}">${c.dataset.sev}</span></td><td class="file">${c.dataset.file}</td><td>${c.querySelector('h4').textContent.slice(0,90)}</td></tr>`).join('');
+}
+document.querySelectorAll('.btn[data-f]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.btn[data-f]').forEach(x=>x.classList.remove('active'));b.classList.add('active');render();});
+document.getElementById('q').oninput=render; document.getElementById('sort').onchange=render;
+document.getElementById('expand').onclick=e=>{const h=cards.every(c=>c.style.display!=='none');cards.forEach(c=>c.style.display=h?'none':'');e.target.textContent=h?'Tout replier':'Tout déplier';render();};
+document.getElementById('btn-fixed').onclick=e=>{document.querySelectorAll('.btn[data-f]').forEach(x=>x.classList.remove('active'));document.querySelector('.btn[data-f="ALL"]').classList.add('active');document.getElementById('q').value='corrigé';render();};
+document.querySelectorAll('#tbl th').forEach(th=>th.onclick=()=>{document.getElementById('sort').value=th.dataset.k==='id'?'id':th.dataset.k==='file'?'file':'sev';render();});
+render();
+</script>
+</body>
+</html>

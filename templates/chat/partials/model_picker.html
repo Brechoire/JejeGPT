@@ -26,6 +26,9 @@
         {% if c.web %}
         <span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#ececec] text-[#424242]" title="Accès internet : recherche web proposée dans le composer">🌐 Internet</span>
         {% endif %}
+        {% if c.web_tested %}
+        <span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700" title="Navigation prouvée par le bouton Tester (onglet Providers)">✅ testé</span>
+        {% endif %}
         {% if c.thinking %}
         <span class="shrink-0 text-[0.625rem] px-1.5 py-0.5 rounded-full bg-[#ececec] text-[#424242]" title="Réflexion : raisonnement / chaîne de pensée proposée dans le composer">Réflexion</span>
         {% endif %}

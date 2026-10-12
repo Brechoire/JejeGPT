@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Démo partition — JejeGPT{% endblock %}
+{% block extra_head %}
+  {% load static %}
+  <script defer src="https://cdn.jsdelivr.net/npm/abcjs@6.4.4/dist/abcjs-basic-min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+  <script defer src="{% static 'js/score-viewer.js' %}"></script>
+{% endblock %}
 {% block body %}
 <div class="flex h-screen" x-data="{ sidebarOpen: window.innerWidth >= 768 }">
   {% include "chat/partials/sidebar.html" %}

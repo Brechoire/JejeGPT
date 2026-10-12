@@ -34,15 +34,23 @@ def memory_context() -> str:
     from .models import AppSettings, MemoryFact
 
     try:
-        enabled = AppSettings.get_solo().memory_enabled
+        enabled = AppSettings.get_cached().memory_enabled
     except Exception:
         return ""
     if not enabled:
         return ""
+    # Borne DB : les actifs sont plafonnés à JEJEGPT_MEMORY_MAX_FACTS par
+    # maybe_extract (désactivation au-delà). On ne charge jamais plus, ce qui
+    # évite un SELECT * de toute la table quand elle grossit. La troncature
+    # au budget caractères reste inchangée en Python.
+    try:
+        max_facts = max(1, int(settings.JEJEGPT_MEMORY_MAX_FACTS))
+    except (ValueError, TypeError):
+        max_facts = 50
     facts = list(
         MemoryFact.objects.filter(active=True)
         .order_by("-created_at")
-        .values_list("content", flat=True)
+        .values_list("content", flat=True)[:max_facts]
     )
     if not facts:
         return ""
@@ -87,12 +95,14 @@ def maybe_extract(conv, user_text: str, assistant_text: str) -> None:
     from .models import AppSettings, MemoryFact
 
     try:
-        if not AppSettings.get_solo().memory_enabled:
+        if not AppSettings.get_cached().memory_enabled:
             return
         if conv.provider is None or not conv.model_id:
             return
         if not (assistant_text or "").strip():
             return
+        # session_id requis : le proxy Go refuse sans x-opencode-session (400).
+        # Tag dédié pour distinguer ce trafic d'extraction dans les logs/routage.
         raw = providers.chat_complete(
             conv.provider, conv.model_id,
             [
@@ -101,6 +111,7 @@ def maybe_extract(conv, user_text: str, assistant_text: str) -> None:
             ],
             temperature=0.0,
             timeout=settings.JEJEGPT_HTTP_TIMEOUT,
+            session_id=f"memory-{conv.pk}",
             route=providers.resolve_route(conv.provider, conv.model_id),
         )
         for text in _parse_facts(raw):

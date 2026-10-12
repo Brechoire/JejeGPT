@@ -151,7 +151,12 @@ def test_data_clear_keeps_providers():
     c = Conversation.objects.create(title="X")
     c.messages.create(role="user", content="hi")
     client = Client()
+    # Sans confirm serveur : refus, rien n'est supprimé (garde anti-curl).
     resp = client.post("/donnees/effacer/")
+    assert resp.status_code == 302
+    assert Conversation.objects.count() == 1
+    # Avec confirm : suppression effective, providers conservés.
+    resp = client.post("/donnees/effacer/", {"confirm": "SUPPRIMER"})
     assert resp.status_code == 302
     assert Conversation.objects.count() == 0
     assert Provider.objects.count() == before
@@ -440,11 +445,13 @@ def test_codeblock_markdown_lang_and_light_css():
     assert 'class="language-markdown"' in html
     assert ">markdown<" in html
     # Thème clair ChatGPT : fond gris clair, barre claire, highlight.js light.
+    # Le CSS/JS highlight vit dans detail.html (extra_head), plus dans base.
     css = pathlib.Path("static/css/jejegpt.css").read_text(encoding="utf-8")
     assert ".codeblock-bar" in css
     assert "#141412" not in css
-    assert "github.min.css" in pathlib.Path("templates/base.html").read_text(encoding="utf-8")
-    assert "github-dark" not in pathlib.Path("templates/base.html").read_text(encoding="utf-8")
+    detail_head = pathlib.Path("templates/chat/detail.html").read_text(encoding="utf-8")
+    assert "github.min.css" in detail_head
+    assert "github-dark" not in detail_head
 
 
 def test_rich_render_tables_headings_hr():
@@ -790,11 +797,14 @@ def test_ui_controls_gating():
     LLMModel.objects.create(provider=go, model_id="qwen3.7-plus", route="messages", supports_thinking=True)
     LLMModel.objects.create(provider=go, model_id="glm-5.3-flash")
     assert providers.ui_controls(go, "muse-spark-1.3-contributor") == {
-        "route": "responses", "effort": True, "web": True, "thinking": False, "known": True}
+        "route": "responses", "effort": True, "web": True, "thinking": False, "known": True,
+        "web_tested": False}
     assert providers.ui_controls(go, "qwen3.7-plus") == {
-        "route": "messages", "effort": True, "web": False, "thinking": True, "known": True}
+        "route": "messages", "effort": True, "web": False, "thinking": True, "known": True,
+        "web_tested": False}
     assert providers.ui_controls(go, "glm-5.3-flash") == {
-        "route": "", "effort": False, "web": False, "thinking": False, "known": True}
+        "route": "", "effort": False, "web": False, "thinking": False, "known": True,
+        "web_tested": False}
     assert providers.ui_controls(go, "omen-alpha")["known"] is False  # inconnu -> non vérifié
     # ligne cache vide (sync sans métadonnées) -> non vérifié, pas non supporté
     LLMModel.objects.create(provider=go, model_id="modele-mystere")
@@ -957,12 +967,15 @@ def test_effort_label_persistent():
 def test_base_uses_browser_highlight_build():
     import pathlib
 
+    # highlight.js vit dans detail.html (extra_head) : global = base, cible = detail.
     base = pathlib.Path("templates/base.html").read_text(encoding="utf-8")
-    assert "cdnjs.cloudflare.com/ajax/libs/highlight.js" in base
-    assert "lib/common.min.js" not in base
+    detail = pathlib.Path("templates/chat/detail.html").read_text(encoding="utf-8")
+    assert "cdnjs.cloudflare.com/ajax/libs/highlight.js" in detail
+    assert "cdnjs.cloudflare.com/ajax/libs/highlight.js" not in base
+    assert "lib/common.min.js" not in detail
     # Thème clair : highlight.js light obligatoire, dark interdit.
-    assert "styles/github.min.css" in base
-    assert "github-dark" not in base
+    assert "styles/github.min.css" in detail
+    assert "github-dark" not in detail
 
 
 @pytest.mark.django_db
@@ -1165,8 +1178,9 @@ def test_thread_action_bar_rendered():
     c.messages.create(role="user", content="ma question")
     c.messages.create(role="assistant", content="réponse")
     html = Client().get(f"/{c.pk}/").content.decode()
-    # question : copier, modifier, régénérer ; réponse : copier, +/-, régénérer, 3 canaux newsletter
-    assert html.count("msg-action") == 10
+    # question : copier, modifier, régénérer ; réponse : copier, MD, écouter,
+    # +/-, régénérer, pin, fork, canvas, retry-with, 3 canaux newsletter
+    assert html.count("msg-action") == 16
     assert 'data-tip="Copier"' in html
     assert 'data-tip="Modifier"' in html
     assert "Régénérer la réponse" in html
@@ -1174,6 +1188,11 @@ def test_thread_action_bar_rendered():
     assert "Mauvaise réponse" in html
     assert "copyMsg(this)" in html
     assert "Enregistrer et régénérer" in html
+    assert "Copier en Markdown" in html
+    assert "Ouvrir en Canvas" in html
+    assert "comparo A-B" in html
+    assert "selection-toolbar" in html
+    assert "followups" in html or "Approfondis" in html
 
 
 def _max_form_depth(html: str) -> int:
@@ -1449,7 +1468,8 @@ def test_thread_partial_no_forced_scroll():
 
     partial = pathlib.Path("templates/chat/partials/thread.html").read_text(encoding="utf-8")
     assert "scrollHeight" not in partial  # fini le saut en bas à chaque rendu
-    assert "highlightAll" in partial  # coloration conservée
+    # Coloration conservée mais ciblée (blocs non colorés seuls, plus de scan global).
+    assert "highlightElement" in partial and "highlightAll" not in partial
 
 
 @pytest.mark.django_db

@@ -22,6 +22,7 @@
   <a href="{% url 'chat:data_export' %}" class="text-[0.8125rem] px-4 py-2 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5]">⬇ Exporter (JSON)</a>
   <form method="post" action="{% url 'chat:data_clear' %}" onsubmit="return confirm('Supprimer TOUTES les conversations et messages ? Les providers seront conservés.')">
     {% csrf_token %}
+    <input type="hidden" name="confirm" value="SUPPRIMER">
     <button class="text-[0.8125rem] px-4 py-2 rounded-lg text-red-600 border border-red-200 hover:bg-red-50">Tout effacer…</button>
   </form>
 </div>

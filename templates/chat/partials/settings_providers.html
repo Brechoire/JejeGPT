@@ -41,6 +41,15 @@
         <label class="flex items-center gap-1"><input type="checkbox" name="supports_thinking" value="1" {% if m.supports_thinking %}checked{% endif %}> réflexion</label>
         <button class="px-2 py-0.5 rounded-lg border border-[#e5e5e5] hover:bg-[#f4f4f4]">OK</button>
       </form>
+      <form method="post" action="{% url 'chat:model_web_test' p.pk %}" class="flex items-center gap-2 mt-1 flex-wrap" onsubmit="return confirm('Tester la navigation web de « {{ m.model_id|escapejs }} » ? (1 appel LLM)')">
+        {% csrf_token %}
+        <input type="hidden" name="model_id" value="{{ m.model_id }}">
+        <button class="text-[0.6875rem] px-2 py-0.5 rounded-lg border border-[#e5e5e5] hover:bg-[#f4f4f4]" title="Envoie une sonde datée avec web forcé et vérifie les liens cités. Ne modifie jamais les cases.">🌐 Tester</button>
+        {% if m.web_test_status == "ok" %}<span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-green-100 text-green-700" title="{{ m.web_test_detail|default:'Navigation prouvée' }}{% if m.web_test_at %} — testé le {{ m.web_test_at|date:'d/m H:i' }}{% endif %}">✅ navigue</span>
+        {% elif m.web_test_status == "ko" %}<span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-red-100 text-red-700" title="{{ m.web_test_detail|default:'Ne navigue pas' }}{% if m.web_test_at %} — testé le {{ m.web_test_at|date:'d/m H:i' }}{% endif %}">❌ ne navigue pas</span>
+        {% elif m.web_test_status == "doute" %}<span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800" title="{{ m.web_test_detail|default:'Verdict incertain' }}{% if m.web_test_at %} — testé le {{ m.web_test_at|date:'d/m H:i' }}{% endif %}">❓ incertain</span>
+        {% endif %}
+      </form>
       {% endfor %}
     </details>
     {% endif %}

@@ -6,39 +6,32 @@
   <title>{% block title %}JejeGPT{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            ink: '#0d0d0d',
-            accent: '#ff4d00',
-          },
-          fontFamily: {
-            sans: ['Roboto', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', '"Helvetica Neue"', 'Arial', 'sans-serif'],
-          },
-        }
-      }
-    }
-  </script>
+  {# CSS Tailwind précompilé (npm run build:css après ajout de classes). #}
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'css/tailwind.css' %}">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/abcjs@6.4.4/dist/abcjs-basic-min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/marked@18.0.14/lib/marked.umd.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"></script>
-  {% load static %}
+  {% comment %}Libs lourdes par page via le bloc extra_head : highlight.js +
+  marked/purify sur detail (fil + stream), abcjs/tone/score-viewer sur la démo.{% endcomment %}
+  {% block extra_head %}{% endblock %}
   <link rel="stylesheet" href="{% static 'css/jejegpt.css' %}">
-  <script defer src="{% static 'js/score-viewer.js' %}"></script>
 </head>
 <body class="bg-white text-ink font-sans h-screen" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
   {% block body %}{% endblock %}
   <script>
-    document.body.addEventListener('htmx:afterSwap', () => { if (window.hljs) hljs.highlightAll(); if (window.renderScores) window.renderScores(document); });
+    document.body.addEventListener('htmx:afterSwap', (e) => {
+      // Ciblé sur le fragment swappé (pas tout le document) : coût constant
+      // même sur les longs fils. Garde data-hl anti double-coloration.
+      const root = (e && e.detail && e.detail.target) || document;
+      if (window.hljs) root.querySelectorAll('pre code:not([data-hl])').forEach((b) => {
+        try { window.hljs.highlightElement(b); b.dataset.hl = '1'; } catch {}
+      });
+      if (window.renderScores) window.renderScores(root.nodeType ? root : document);
+    });
     // Composer autogrow façon ChatGPT : grandit avec le texte jusqu'au plafond
     // CSS (40vh), scroll interne seulement au-delà.
     function autogrow(el) {
@@ -178,6 +171,214 @@
         btn.textContent = 'Copié ✓';
         setTimeout(() => { btn.textContent = label; }, 1500);
       });
+    }
+    function copyMarkdown(btn) {
+      navigator.clipboard.writeText(btn.dataset.raw || '').then(() => {
+        const label = btn.textContent;
+        btn.textContent = 'Copié ✓';
+        setTimeout(() => { btn.textContent = label; }, 1500);
+      });
+    }
+    function fillComposer(btn) {
+      const ta = document.getElementById('composer-input') || document.querySelector('textarea[name=content]');
+      if (!ta) return;
+      ta.value = (ta.value ? ta.value + '\n' : '') + (btn.dataset.text || btn.textContent);
+      autogrow(ta);
+      ta.focus();
+    }
+    // Artifacts : aperçu local sandbox (HTML/SVG) ou rendu texte (mermaid).
+    function previewArtifact(btn) {
+      const box = btn.closest('.codeblock');
+      if (!box) return;
+      const code = box.querySelector('code').innerText;
+      const lang = (box.querySelector('.lang') || {}).textContent || '';
+      const prev = box.querySelector('.artifact-preview');
+      if (!prev) return;
+      if (!prev.hidden) { prev.hidden = true; prev.innerHTML = ''; btn.textContent = 'Aperçu'; return; }
+      prev.hidden = false;
+      btn.textContent = 'Masquer';
+      if (lang.trim().toLowerCase() === 'mermaid') {
+        prev.innerHTML = '';
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'background:#fafafa;padding:1rem;white-space:pre-wrap;font-size:0.8rem;';
+        pre.textContent = code;
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size:0.75rem;color:#6e6e6e;padding:0.25rem 0;';
+        note.textContent = 'Diagramme Mermaid (source ci-dessus — rendu graphique si mermaid.js chargé).';
+        prev.appendChild(note);
+        prev.appendChild(pre);
+        if (window.mermaid) { try { window.mermaid.run(); } catch (e) {} }
+        return;
+      }
+      const frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-same-origin');
+      frame.style.cssText = 'width:100%;min-height:16rem;background:#fff;border-top:1px solid #e5e5e5;';
+      prev.innerHTML = '';
+      prev.appendChild(frame);
+      frame.srcdoc = code;
+    }
+    function downloadArtifact(btn) {
+      const box = btn.closest('.codeblock');
+      if (!box) return;
+      const code = box.querySelector('code').innerText;
+      const lang = ((box.querySelector('.lang') || {}).textContent || 'txt').trim().toLowerCase();
+      const ext = lang === 'code' ? 'txt' : lang.split(/[^a-z0-9]/)[0] || 'txt';
+      const blob = new Blob([code], {type: 'text/plain;charset=utf-8'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'artifact.' + ext;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }
+    // Surlignage → toolbar : Expliquer / Reformuler / Traduire / Question.
+    window.bindSelectionToolbar = function() {
+      const bar = document.getElementById('selection-toolbar');
+      if (!bar || bar.dataset.bound) return;
+      bar.dataset.bound = '1';
+      let current = '';
+      document.addEventListener('mouseup', (e) => {
+        if (bar.contains(e.target)) return;
+        const sel = window.getSelection();
+        const text = sel ? sel.toString().trim() : '';
+        if (text.length < 3 || text.length > 2000) { bar.classList.add('hidden'); return; }
+        current = text;
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        bar.classList.remove('hidden');
+        bar.style.left = Math.min(window.innerWidth - 320, Math.max(8, r.left + window.scrollX)) + 'px';
+        bar.style.top = (r.bottom + window.scrollY + 8) + 'px';
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (!bar.contains(e.target)) bar.classList.add('hidden');
+      });
+      bar.querySelectorAll('button').forEach((b) => {
+        b.addEventListener('click', () => {
+          const act = b.dataset.act;
+          const ta = document.getElementById('composer-input') || document.querySelector('textarea[name=content]');
+          const prompts = {
+            expliquer: 'Explique ce passage :\n> ',
+            reformuler: 'Reformule clairement :\n> ',
+            traduire: 'Traduis en français :\n> ',
+            question: 'Ma question sur ce passage « ',
+          };
+          let insert = (prompts[act] || '') + current + (act === 'question' ? ' » : ' : '');
+          if (ta) { ta.value = (ta.value ? ta.value + '\n' : '') + insert; autogrow(ta); ta.focus(); }
+          bar.classList.add('hidden');
+          window.getSelection().removeAllRanges();
+        });
+      });
+    };
+    // Voix 100 % navigateur : dictée (SpeechRecognition) + lecture (speechSynthesis).
+    function dictateToComposer() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { alert('Dictée non supportée par ce navigateur (Chrome/Edge OK).'); return; }
+      const rec = new SR();
+      rec.lang = 'fr-FR';
+      rec.interimResults = false;
+      rec.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        const ta = document.getElementById('composer-input') || document.querySelector('textarea[name=content]');
+        if (ta) { ta.value = (ta.value ? ta.value + ' ' : '') + text; autogrow(ta); ta.focus(); }
+      };
+      rec.onerror = (e) => alert('Dictée impossible : ' + (e.error || 'erreur'));
+      rec.start();
+    }
+    function speakText(btn) {
+      if (!window.speechSynthesis) { alert('Lecture non supportée par ce navigateur.'); return; }
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance((btn.dataset.raw || '').slice(0, 2000));
+      u.lang = 'fr-FR';
+      window.speechSynthesis.speak(u);
+    }
+    function toggleAttachments() {
+      const p = document.getElementById('attachments-panel');
+      if (p) p.classList.toggle('hidden');
+    }
+    // Slash-commands : popup depuis #snippets-data (+ API en repli).
+    function bindSlash(ta) {
+      if (!ta || ta.dataset.slashBound) return;
+      ta.dataset.slashBound = '1';
+      const popup = document.getElementById('slash-popup');
+      ta.addEventListener('input', async () => {
+        if (!popup) return;
+        const m = ta.value.match(/(?:^|\n)\/(\S*)$/);
+        if (!m) { popup.classList.add('hidden'); return; }
+        let items = [];
+        try {
+          const el = document.getElementById('snippets-data');
+          items = el ? JSON.parse(el.textContent) : [];
+        } catch { items = []; }
+        const q = (m[1] || '').toLowerCase();
+        const hits = items.filter((s) => (s.cmd || '').toLowerCase().includes('/' + q) || (s.label || '').toLowerCase().includes(q)).slice(0, 7);
+        if (!hits.length) { popup.classList.add('hidden'); return; }
+        popup.innerHTML = '';
+        hits.forEach((s) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'w-full text-left px-3 py-2 hover:bg-[#f4f4f4] flex gap-2';
+          b.innerHTML = '<span class="font-mono text-accent"></span><span></span>';
+          b.querySelector('span').textContent = s.cmd;
+          b.querySelector('span + span').textContent = s.label;
+          b.addEventListener('click', () => {
+            ta.value = ta.value.replace(/(?:^|\n)\/\S*$/, (p) => p.startsWith('\n') ? '\n' + s.prompt : s.prompt);
+            autogrow(ta);
+            ta.focus();
+            popup.classList.add('hidden');
+          });
+          popup.appendChild(b);
+        });
+        popup.classList.remove('hidden');
+      });
+    }
+    function toggleCanvas(force) {
+      const w = document.getElementById('canvas-wrap');
+      if (!w) return;
+      const show = force !== undefined ? force : w.classList.contains('hidden');
+      w.classList.toggle('hidden', !show);
+    }
+    async function openCanvas(mid) {
+      const w = document.getElementById('canvas-wrap');
+      if (!w) return;
+      w.classList.remove('hidden');
+      const csrf = newsletterCsrf();
+      const body = new FormData();
+      body.append('csrfmiddlewaretoken', csrf);
+      if (mid) body.append('message_id', String(mid));
+      const resp = await fetch(w.dataset.openUrl, {method: 'POST', body: body, headers: {'X-CSRFToken': csrf, 'HX-Request': 'true'}});
+      if (resp.ok) w.innerHTML = await resp.text();
+    }
+    async function canvasSave(btn) {
+      const w = document.getElementById('canvas-wrap');
+      const csrf = newsletterCsrf();
+      const status = document.getElementById('canvas-status');
+      const body = new FormData();
+      body.append('csrfmiddlewaretoken', csrf);
+      body.append('title', (document.getElementById('canvas-title') || {}).value || '');
+      body.append('content', (document.getElementById('canvas-content') || {}).value || '');
+      if (status) status.textContent = 'Enregistrement…';
+      const resp = await fetch(btn.dataset.url, {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}});
+      const data = await resp.json().catch(() => ({}));
+      if (status) status.textContent = resp.ok ? ('Enregistré v' + data.version) : 'Échec';
+    }
+    async function canvasAction(btn) {
+      const csrf = newsletterCsrf();
+      const status = document.getElementById('canvas-status');
+      const body = new FormData();
+      body.append('csrfmiddlewaretoken', csrf);
+      body.append('action', btn.dataset.action);
+      if (status) status.textContent = 'Génération…';
+      btn.disabled = true;
+      try {
+        const resp = await fetch(btn.dataset.url, {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}});
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        const ta = document.getElementById('canvas-content');
+        if (ta) ta.value = data.content || '';
+        if (status) status.textContent = 'Prêt v' + data.version + ' — pensez à Enregistrer (auto-appliqué).';
+      } catch (e) {
+        if (status) status.textContent = e.message || 'Échec';
+      } finally {
+        btn.disabled = false;
+      }
     }
     // Pastille Planifiées : actualisation auto sans rechargement.
     // Interroge l'endpoint badge et affiche/masque le compteur.

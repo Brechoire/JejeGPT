@@ -82,6 +82,7 @@ def parse_schedule_request(provider, model_id: str, user_text: str, today=None) 
     if provider is None or not model_id:
         return None
     try:
+        # session_id requis : le proxy Go refuse sans x-opencode-session (400).
         raw = providers.chat_complete(
             provider, model_id,
             [
@@ -90,6 +91,7 @@ def parse_schedule_request(provider, model_id: str, user_text: str, today=None) 
             ],
             temperature=0.0,
             timeout=settings.JEJEGPT_HTTP_TIMEOUT,
+            session_id=f"schedule-parse-{provider.pk}" if provider.pk else None,
             route=providers.resolve_route(provider, model_id),
         )
     except providers.ProviderError:

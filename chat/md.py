@@ -12,6 +12,8 @@ ALLOWED_TAGS = [
     "pre", "code", "h1", "h2", "h3", "h4", "table", "thead", "tbody", "tr", "th", "td", "hr", "img",
     "div", "button", "span", "figure", "figcaption", "sub",  # barre .codeblock + galerie .image-grid
     "details", "summary",  # sommaire auto des longues réponses
+    "br",  # sauts de ligne simples (extension nl2br) : paragraphes aérés type mail
+    "p",  # paragraphes Markdown : sans lui, bleach les dépouille et tout se colle
 ]
 ALLOWED_ATTRS = {
     **bleach.sanitizer.ALLOWED_ATTRIBUTES,
@@ -19,7 +21,7 @@ ALLOWED_ATTRS = {
     "code": ["class"],
     "pre": ["class"],
     "img": ["src", "alt", "title", "loading", "width", "height", "referrerpolicy"],
-    "div": ["class"],
+    "div": ["class", "hidden"],
     "button": ["class", "onclick", "title"],
     "span": ["class"],
     "figure": ["class"],
@@ -46,25 +48,44 @@ _RE_SENTENCE_MARK = re.compile(r"(?<=[a-zàâäéèêëîïôöùûüÿç0-9\)»
 # Titre Markdown collé au texte (ex. "illustrer.## 🌊") : doit repartir à la ligne.
 _RE_GLUED_HEADING = re.compile(r"([^\n])\s*(#{2,4} )")
 _RE_TABLE = re.compile(r"<table>(.*?)</table>", re.DOTALL)
+_SEP = r"(?:\s|<br\s*/?>)*"
 _RE_IMG_P = re.compile(
-    r"<p>((?:\s*<a[^>]*>\s*<img[^>]*>\s*</a>\s*|\s*<img[^>]*>\s*){1,6})</p>",
+    rf"<p>({_SEP}(?:<a[^>]*>{_SEP}<img[^>]*>{_SEP}</a>{_SEP}|<img[^>]*>{_SEP}){{1,6}})</p>",
     re.DOTALL,
 )
 _RE_IMG_TAG = re.compile(r"<img(?![^>]*\bloading=)", re.IGNORECASE)
+_RE_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
 def _wrap_codeblocks(html: str) -> str:
-    """Enveloppe chaque <pre> : barre langage + bouton Copier (voir jejegpt.css)."""
+    """Enveloppe chaque <pre> : barre langage + boutons Copier / Preview / Télécharger.
+
+    Preview/Télécharger uniquement pour html, svg, mermaid (artifacts) : le rendu
+    est construit côté client (iframe sandbox / mermaid.js), jamais de HTML
+    injecté server-side — pas de surface XSS supplémentaire.
+    """
+
+    PREVIEW_LANGS = {"html", "svg", "mermaid", "xml"}
 
     def _repl(match: re.Match) -> str:
         classes = match.group(1) or ""
         lang = classes.replace("language-", "").split()[0] if classes else "code"
         code = match.group(2)
+        extra = ""
+        if lang.lower() in PREVIEW_LANGS:
+            extra = (
+                "<button type=\"button\" onclick=\"previewArtifact(this)\" "
+                "title=\"Aperçu rendu (sandbox local)\">Aperçu</button>"
+                "<button type=\"button\" onclick=\"downloadArtifact(this)\" "
+                "title=\"Télécharger ce bloc\">↓</button>"
+            )
         bar = (
             f"<div class=\"codeblock\"><div class=\"codeblock-bar\">"
             f"<span class=\"lang\">{html_lib.escape(lang)}</span>"
             f"<button type=\"button\" onclick=\"copyCode(this)\">Copier</button>"
-            f"</div><pre><code class=\"{html_lib.escape(classes)}\">{code}</code></pre></div>"
+            f"{extra}"
+            f"</div><pre><code class=\"{html_lib.escape(classes)}\">{code}</code></pre>"
+            f"<div class=\"artifact-preview\" hidden=\"hidden\"></div></div>"
         )
         return bar
 
@@ -156,14 +177,23 @@ def _wrap_images(html: str) -> str:
     """
 
     def _repl(match: re.Match) -> str:
-        inner = _RE_IMG_TAG.sub('<img loading="lazy" referrerpolicy="no-referrer"', match.group(1))
+        inner = _RE_BR.sub("", match.group(1))
+        inner = _RE_IMG_TAG.sub('<img loading="lazy" referrerpolicy="no-referrer"', inner)
         return f'<figure class="image-grid">{inner}</figure>'
 
     return _RE_IMG_P.sub(_repl, html)
 
 
 def _linkify_callback(attrs, new=False):
-    """Ouvre les liens dans un nouvel onglet, sans fuite referrer/opener."""
+    """Ouvre les liens externes dans un nouvel onglet, sans fuite referrer/opener.
+
+    Les ancres internes du sommaire (href="#…") restent sur la page.
+    """
+    href = attrs.get((None, "href"), "")
+    if href.startswith("#"):
+        attrs.pop((None, "target"), None)
+        attrs.pop((None, "rel"), None)
+        return attrs
     attrs[(None, "target")] = "_blank"
     attrs[(None, "rel")] = "noopener noreferrer nofollow"
     return attrs
@@ -271,7 +301,7 @@ def _append_sources_footer(html: str) -> str:
 def render_markdown(text: str) -> str:
     # Pas de codehilite server-side : fenced_code émet <code class="language-x">,
     # la coloration est faite côté client par highlight.js (déjà chargé).
-    html = markdown.markdown(normalize_text(text or ""), extensions=["fenced_code", "tables", "sane_lists"])
+    html = markdown.markdown(normalize_text(text or ""), extensions=["fenced_code", "tables", "sane_lists", "nl2br"])
     html = _add_heading_ids_and_toc(html)
     html = _wrap_codeblocks(html)
     html = _wrap_tables(html)

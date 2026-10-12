@@ -3,7 +3,9 @@ from django.contrib import admin
 from .models import (
     AppSettings,
     Assistant,
+    Attachment,
     Conversation,
+    Document,
     Export,
     LLMModel,
     Message,
@@ -82,3 +84,15 @@ class ScheduledRunAdmin(admin.ModelAdmin):
     list_display = ("created_at", "task", "success", "seen")
     list_filter = ("success", "seen")
     readonly_fields = ("task", "message", "success", "error", "seen", "created_at")
+
+
+@admin.register(Document)
+class DocumentAdmin(admin.ModelAdmin):
+    list_display = ("title", "conversation", "version", "updated_at")
+    readonly_fields = ("version", "created_at", "updated_at")
+
+
+@admin.register(Attachment)
+class AttachmentAdmin(admin.ModelAdmin):
+    list_display = ("file_name", "conversation", "size", "created_at")
+    readonly_fields = ("file", "file_name", "mime", "size", "excerpt", "created_at")

@@ -176,11 +176,12 @@ def ui_controls(provider: Provider | None, model_id: str) -> dict:
         cached is not None
         and bool(cached.route or cached.supports_effort or cached.supports_web or cached.supports_thinking)
     )
+    web_tested = cached is not None and cached.web_test_status == "ok"
     if route == "responses":
-        return {"route": route, **_controls_for(route, caps), "known": known}
+        return {"route": route, **_controls_for(route, caps), "known": known, "web_tested": web_tested}
     if route == "messages":
-        return {"route": route, **_controls_for(route, caps), "known": known}
-    return {"route": route, **_controls_for(route, caps), "known": known}
+        return {"route": route, **_controls_for(route, caps), "known": known, "web_tested": web_tested}
+    return {"route": route, **_controls_for(route, caps), "known": known, "web_tested": web_tested}
 
 
 def model_controls(model: LLMModel, base_url: str = "") -> dict:
@@ -198,7 +199,8 @@ def model_controls(model: LLMModel, base_url: str = "") -> dict:
     known = model.model_id in MODEL_CAPABILITIES or bool(
         route or caps["effort"] or caps["web"] or caps["thinking"]
     )
-    return {"route": route, **_controls_for(route, caps), "known": known}
+    return {"route": route, **_controls_for(route, caps), "known": known,
+            "web_tested": model.web_test_status == "ok"}
 
 
 def _clean_options(options: dict | None) -> dict:
@@ -497,8 +499,21 @@ def fetch_models(provider: Provider, timeout: float = 30.0) -> list[str]:
     return [str(i.get("id", "")) for i in fetch_model_entries(provider, timeout=timeout)]
 
 
+def _caps_for(mid: str, entries_by_id: dict[str, dict]) -> dict[str, bool]:
+    """Capacités d'un modèle à la création (table statique > OpenRouter > défaut).
+
+    Factorisé pour être identique entre le chemin bulk et le repli ligne-à-ligne.
+    """
+    if mid in MODEL_CAPABILITIES:
+        return model_capabilities(mid)
+    entry = entries_by_id.get(mid)
+    return caps_from_openrouter(entry) if entry is not None else model_capabilities(mid)
+
+
 def sync_models(provider: Provider, timeout: float = 30.0) -> tuple[int, str]:
     """Upsert le cache LLMModel. Retourne (nb, erreur). Ne lève pas."""
+    from django.db import IntegrityError
+
     try:
         ids = fetch_models(provider, timeout=timeout)
     except ProviderError as exc:
@@ -513,33 +528,58 @@ def sync_models(provider: Provider, timeout: float = 30.0) -> tuple[int, str]:
             entries_by_id = {str(e.get("id")): e for e in fetch_model_entries(provider, timeout=timeout)}
         except ProviderError:
             entries_by_id = {}
+    base_url = str(provider.base_url)
+    existing = {
+        m.model_id: m
+        for m in provider.cached_models.only("id", "model_id", "display_name", "route")
+    }
+    to_create: list[LLMModel] = []
+    to_update: list[LLMModel] = []
     for mid in ids:
-        obj, created = LLMModel.objects.update_or_create(
-            provider=provider,
-            model_id=mid,
-            defaults={
-                "display_name": mid,
-                "route": lookup_route(str(provider.base_url), mid),
-            },
-        )
-        if created:
-            # Les capacités ne s'appliquent qu'à la création : les réglages manuels
-            # postérieurs (cases onglet Providers) ne sont jamais écrasés.
-            # Priorité : table statique (source de vérité) > métadonnées OpenRouter
-            # (thinking auto-détecté) > tout-False.
-            if mid in MODEL_CAPABILITIES:
-                caps = model_capabilities(mid)
-            else:
-                entry = entries_by_id.get(mid)
-                caps = caps_from_openrouter(entry) if entry is not None else model_capabilities(mid)
-            obj.supports_effort = caps["effort"]
-            obj.supports_web = caps["web"]
-            obj.supports_thinking = caps["thinking"]
-            obj.save(update_fields=["supports_effort", "supports_web", "supports_thinking"])
-    provider.cached_models.exclude(model_id__in=ids).delete()
+        route = lookup_route(base_url, mid)
+        obj = existing.get(mid)
+        if obj is None:
+            # Mêmes règles qu'avant : display_name/route posés, capacités
+            # appliquées UNIQUEMENT à la création (overrides manuels préservés).
+            caps = _caps_for(mid, entries_by_id)
+            to_create.append(LLMModel(
+                provider=provider, model_id=mid, display_name=mid, route=route,
+                supports_effort=caps["effort"], supports_web=caps["web"],
+                supports_thinking=caps["thinking"],
+            ))
+        elif obj.display_name != mid or obj.route != route:
+            obj.display_name = mid
+            obj.route = route
+            to_update.append(obj)
+    try:
+        if to_create:
+            LLMModel.objects.bulk_create(to_create, batch_size=500)
+    except IntegrityError:
+        # Sync concurrent (double-clic Actualiser) : repli ligne-à-ligne
+        # idempotent, à sémantique strictement identique.
+        logger.info("sync_models bulk race, repli ligne-à-ligne (%s)", provider.name)
+        for m in to_create:
+            obj, created = LLMModel.objects.update_or_create(
+                provider=provider, model_id=m.model_id,
+                defaults={"display_name": m.display_name, "route": m.route},
+            )
+            if created:
+                caps = _caps_for(m.model_id, entries_by_id)
+                obj.supports_effort = caps["effort"]
+                obj.supports_web = caps["web"]
+                obj.supports_thinking = caps["thinking"]
+                obj.save(update_fields=["supports_effort", "supports_web", "supports_thinking"])
+    if to_update:
+        LLMModel.objects.bulk_update(to_update, ["display_name", "route"], batch_size=500)
+    # Suppression des obsolètes par lots de PK (pas de NOT IN géant : limite
+    # de variables SQLite). Même périmètre qu'avant : tout ce qui n'est plus exposé.
+    ids_set = set(ids)
+    stale = [m.pk for m in existing.values() if m.model_id not in ids_set]
+    for i in range(0, len(stale), 500):
+        provider.cached_models.filter(pk__in=stale[i:i + 500]).delete()
     provider.last_fetch_at = timezone.now()
     provider.last_error = ""
-    provider.save()
+    provider.save(update_fields=["last_fetch_at", "last_error", "updated_at"])
     return len(ids), ""
 
 

@@ -9,6 +9,17 @@ pip install -r requirements.txt
 Usage quotidien : activer le `.venv` (`.\.venv\Scripts\Activate.ps1`), puis les commandes
 ci-dessous. Sans activation, préfixer avec `.\.venv\Scripts\python.exe`.
 
+## CSS (Tailwind précompilé)
+Le CSS utilitaire est **committé** (`static/css/tailwind.css`, ~21 Ko) : aucun
+build n'est requis pour lancer l'app. Rebuild **uniquement après ajout de
+classes Tailwind dans les templates** (sinon styles manquants) :
+```powershell
+npm install   # une fois (Node 18+)
+npm run build:css
+```
+`static/css/input.css` + `tailwind.config.js` sont les sources ; `node_modules/`
+n'est pas commité.
+
 ## Démarrage
 ```powershell
 python manage.py migrate

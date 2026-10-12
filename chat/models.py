@@ -44,6 +44,10 @@ class LLMModel(models.Model):
     supports_effort = models.BooleanField(default=False)
     supports_web = models.BooleanField(default=False)
     supports_thinking = models.BooleanField(default=False)
+    # Dernier test web empirique (bouton « Tester », jamais modifié auto par le test).
+    web_test_status = models.CharField(max_length=5, blank=True, default="")
+    web_test_detail = models.CharField(max_length=300, blank=True, default="")
+    web_test_at = models.DateTimeField(null=True, blank=True)
     # Route d'API connue : '' (chat ou inconnue), 'responses' ou 'messages' (non-chat).
     route = models.CharField(max_length=20, blank=True, default="")
 
@@ -51,6 +55,10 @@ class LLMModel(models.Model):
         ordering = ["model_id"]
         constraints = [
             models.UniqueConstraint(fields=["provider", "model_id"], name="uniq_provider_model")
+        ]
+        indexes = [
+            # Jointures/filtres par provider (sidebar, picker, ui_controls).
+            models.Index(fields=["provider", "model_id"], name="llm_provider_model"),
         ]
 
     def __str__(self) -> str:
@@ -146,6 +154,11 @@ class Conversation(models.Model):
 
     class Meta:
         ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["-updated_at"], name="conv_updated"),
+            models.Index(fields=["project", "-updated_at"], name="conv_proj_updated"),
+            models.Index(fields=["assistant"], name="conv_assistant"),
+        ]
 
     def __str__(self) -> str:
         return self.title
@@ -169,10 +182,24 @@ class Message(models.Model):
         max_length=4, blank=True, default="",
         choices=[("up", "Bonne réponse"), ("down", "Mauvaise réponse")],
     )
+    # Enrichissements : épingles, versions/fork, modèle source.
+    pinned = models.BooleanField(default=False)
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="versions"
+    )
+    version_no = models.PositiveIntegerField(default=1)
+    model_label = models.CharField(max_length=300, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["created_at", "id"]
+        indexes = [
+            # Fil d'une conversation (thread, historique LLM, fork) : égalité + tri.
+            models.Index(fields=["conversation", "created_at", "id"], name="msg_conv_created_id"),
+            models.Index(fields=["conversation", "role"], name="msg_conv_role"),
+            models.Index(fields=["pinned", "created_at"], name="msg_pinned_created"),
+            models.Index(fields=["created_at"], name="msg_created"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.role}: {self.content[:60]}"
@@ -193,10 +220,38 @@ class AppSettings(models.Model):
     def __str__(self) -> str:
         return "Réglages"
 
+    #: TTL du singleton en cache (secondes). Invalidé à chaque save().
+    CACHE_TIMEOUT = 60
+    _CACHE_KEY = "jejegpt:appsettings:solo"
+
     @classmethod
     def get_solo(cls) -> AppSettings:
         obj, _created = cls.objects.get_or_create(pk=1)
         return obj
+
+    @classmethod
+    def get_cached(cls) -> AppSettings:
+        """Singleton mémorisé 60 s (context processor, mémoire, défauts LLM).
+
+        Toute écriture passe par save() qui invalide : pas de valeur périmée
+        au-delà du TTL, même après settings_save. En test, préférer get_solo().
+        """
+        from django.core.cache import cache
+
+        obj = cache.get(cls._CACHE_KEY)
+        if obj is None:
+            obj = cls.get_solo()
+            cache.set(cls._CACHE_KEY, obj, cls.CACHE_TIMEOUT)
+        return obj
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        try:
+            from django.core.cache import cache
+
+            cache.delete(self._CACHE_KEY)
+        except Exception:
+            pass
 
     def default_valid(self) -> bool:
         """Défaut utilisable : provider actif + modèle en cache."""
@@ -226,6 +281,9 @@ class MemoryFact(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["active", "-created_at"], name="mem_active_created"),
+        ]
 
     def __str__(self) -> str:
         return self.content[:60]
@@ -259,13 +317,17 @@ class DeepResearchRun(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            # active_run_for(source, running) + polling statut.
+            models.Index(fields=["source", "status"], name="drr_source_status"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.subject[:60]}: {self.status}"
 
 
 class UsageRecord(models.Model):
-    """Une réponse assistant : tokens, durée, route, succès. Jamais purgé (V1)."""
+    """Une réponse assistant : tokens, durée, route, succès. Rétention via purge_usage."""
 
     conversation = models.ForeignKey(
         Conversation, on_delete=models.CASCADE, related_name="usage_records"
@@ -285,6 +347,12 @@ class UsageRecord(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            # Onglet Utilisation : filtres période + GROUP BY modèle/conversation.
+            models.Index(fields=["created_at"], name="usage_created"),
+            models.Index(fields=["conversation", "created_at"], name="usage_conv_created"),
+            models.Index(fields=["model_id"], name="usage_model"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.model_id}: {self.total_tokens} tok"
@@ -302,6 +370,10 @@ class Export(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["message", "-created_at"], name="exp_msg_created"),
+            models.Index(fields=["created_at"], name="exp_created"),
+        ]
 
     def get_absolute_url(self) -> str:
         return reverse("chat:export_download", kwargs={"token": self.download_token})
@@ -347,6 +419,10 @@ class ScheduledTask(models.Model):
 
     class Meta:
         ordering = ["next_run", "name"]
+        indexes = [
+            # Ticker : tâches actives dues + triggers surveillés.
+            models.Index(fields=["enabled", "next_run"], name="task_enabled_next"),
+        ]
 
     def __str__(self) -> str:
         return self.name
@@ -372,6 +448,11 @@ class ScheduledRun(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            # Historique par tâche (page Planifiées) + pastille non-lus.
+            models.Index(fields=["task", "-created_at"], name="run_task_created"),
+            models.Index(fields=["seen"], name="run_seen"),
+        ]
 
     def __str__(self) -> str:
         return f"{self.task.name}: {'ok' if self.success else 'échec'}"
@@ -419,3 +500,42 @@ class TaskTemplate(models.Model):
         if TEMPLATE_VAR_RE.search(rendered):
             raise ValueError("Il reste des variables non substituées.")
         return rendered
+
+
+class Document(models.Model):
+    """Canvas latéral : document éditable lié à une conversation, versionné."""
+
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE, related_name="documents"
+    )
+    title = models.CharField(max_length=200, default="Document")
+    content = models.TextField(blank=True, default="")
+    version = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self) -> str:
+        return f"{self.title} (v{self.version})"
+
+
+class Attachment(models.Model):
+    """Pièce jointe texte injectée en contexte (sans RAG vectoriel)."""
+
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE, related_name="attachments"
+    )
+    file = models.FileField(upload_to="attachments/%Y/%m/")
+    file_name = models.CharField(max_length=200, blank=True, default="")
+    mime = models.CharField(max_length=120, blank=True, default="")
+    size = models.PositiveIntegerField(default=0)
+    excerpt = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.file_name or f"pièce #{self.pk}"

@@ -43,6 +43,24 @@ def test_sommaire_seulement_si_3_sections():
     assert 'href="#un"' in long and 'href="#deux"' in long and 'href="#trois"' in long
 
 
+def test_sommaire_ancres_internes_sans_target_blank():
+    html = render_markdown("## Un\n\nT.\n\n## Deux\n\nT.\n\n### Trois\n\nT.")
+    assert 'href="#un">Un</a>' in html
+    assert 'href="#un" target' not in html
+    assert 'href="#deux" target' not in html
+
+
+def test_sauts_ligne_simples_conserves_en_br():
+    html = render_markdown("Bonjour Pascal,\nJe reviens vers toi.\nBien a toi,")
+    assert "<p>" in html and "<br" in html
+    assert "Bonjour Pascal,<br" in html
+
+
+def test_vrais_paragraphes_separes():
+    html = render_markdown("Para1.\n\nPara2.")
+    assert html.count("<p>") == 2
+
+
 def test_ancres_slugifiees_sans_accents_et_uniques():
     html = render_markdown("## Résumé Livres\n\nT.\n\n## Résumé Livres\n\nT.\n\n## Café & Thé !\n\nT.")
     assert 'id="resume-livres"' in html

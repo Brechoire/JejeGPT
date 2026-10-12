@@ -86,11 +86,30 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "chat.context_processors.text_scale",
             ],
+            # Templates compilés mémorisés en prod. Exclu en DEBUG : le reloader
+            # dev ne redémarre pas à l'édition d'un template, le cache masquerait
+            # les modifications. Voir docs Django (cached.Loader).
+            **({} if DEBUG else {"loaders": [
+                ("django.template.loaders.cached.Loader", [
+                    "django.template.loaders.filesystem.Loader",
+                    "django.template.loaders.app_directories.Loader",
+                ]),
+            ]}),
         },
     },
 ]
 
 WSGI_APPLICATION = "config.wsgi.application"
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "jejegpt",
+        # Court par défaut (réglages) ; le HTML Markdown utilise son propre TTL long.
+        "TIMEOUT": 60,
+        "OPTIONS": {"MAX_ENTRIES": 2000},
+    }
+}
 
 DATABASES = {
     "default": {
@@ -139,6 +158,7 @@ JEJEGPT_EXPORTS_MAX_INPUT_CHARS = int(env("JEJEGPT_EXPORTS_MAX_INPUT_CHARS", "10
 JEJEGPT_EXPORTS_MAX_BYTES = int(env("JEJEGPT_EXPORTS_MAX_BYTES", "20971520"))
 JEJEGPT_EXPORTS_QUOTA_BYTES = int(env("JEJEGPT_EXPORTS_QUOTA_BYTES", "209715200"))
 JEJEGPT_EXPORTS_RETENTION_DAYS = int(env("JEJEGPT_EXPORTS_RETENTION_DAYS", "30"))
+JEJEGPT_USAGE_RETENTION_DAYS = int(env("JEJEGPT_USAGE_RETENTION_DAYS", "180"))
 JEJEGPT_SCHEDULER_ENABLED = env("JEJEGPT_SCHEDULER_ENABLED", "1") == "1"
 JEJEGPT_SCHEDULER_TICK_SECONDS = int(env("JEJEGPT_SCHEDULER_TICK_SECONDS", "30"))
 JEJEGPT_SCHEDULER_MAX_TASKS = int(env("JEJEGPT_SCHEDULER_MAX_TASKS", "20"))

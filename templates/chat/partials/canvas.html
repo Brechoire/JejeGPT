@@ -1,0 +1,20 @@
+{# Canvas latéral : document éditable + actions IA. Requiert : conversation, document. #}
+<div id="canvas-panel" class="h-full flex flex-col bg-white border-l border-[#e5e5e5]">
+  <div class="flex items-center gap-2 px-3 py-2 border-b border-[#e5e5e5]">
+    <span class="font-medium text-sm truncate flex-1">📝 {{ document.title }} <span class="text-xs text-[#6e6e6e]">v{{ document.version }}</span></span>
+    <button type="button" class="msg-action" data-tip="Fermer le Canvas" onclick="toggleCanvas(false)" aria-label="Fermer">✕</button>
+  </div>
+  <div class="flex flex-wrap gap-1 px-3 py-2 border-b border-[#e5e5e5] text-xs">
+    <button type="button" class="px-2 py-1 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] font-medium" data-action="raccourcir" data-url="{% url 'chat:document_action' document.pk %}" onclick="canvasAction(this)">✨ Raccourcir</button>
+    <button type="button" class="px-2 py-1 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] font-medium" data-action="allonger" data-url="{% url 'chat:document_action' document.pk %}" onclick="canvasAction(this)">✨ Allonger</button>
+    <button type="button" class="px-2 py-1 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] font-medium" data-action="ton-pro" data-url="{% url 'chat:document_action' document.pk %}" onclick="canvasAction(this)">✨ Ton pro</button>
+    <button type="button" class="px-2 py-1 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] font-medium" data-action="corriger" data-url="{% url 'chat:document_action' document.pk %}" onclick="canvasAction(this)">✨ Corriger</button>
+    <button type="button" class="px-2 py-1 rounded-lg bg-[#f4f4f4] hover:bg-[#e5e5e5] font-medium" data-action="traduire-en" data-url="{% url 'chat:document_action' document.pk %}" onclick="canvasAction(this)">✨ Traduire EN</button>
+  </div>
+  <input id="canvas-title" value="{{ document.title }}" class="mx-3 mt-2 border border-[#e5e5e5] rounded-lg p-1.5 text-sm" aria-label="Titre du document">
+  <textarea id="canvas-content" class="flex-1 mx-3 my-2 border border-[#e5e5e5] rounded-xl p-3 text-sm leading-relaxed" style="min-height:12rem;" aria-label="Contenu du document">{{ document.content }}</textarea>
+  <div class="flex items-center gap-2 px-3 pb-3 text-xs">
+    <button type="button" class="px-3 py-1.5 rounded-lg bg-ink text-white" data-url="{% url 'chat:document_save' document.pk %}" onclick="canvasSave(this)">Enregistrer</button>
+    <span id="canvas-status" class="text-[#6e6e6e]" role="status"></span>
+  </div>
+</div>

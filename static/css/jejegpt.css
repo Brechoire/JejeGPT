@@ -382,6 +382,8 @@ html, body {
   width: auto;
   max-width: 100%;
   object-fit: cover;
+  /* Espace réservé avant chargement (anti-saut de mise en page). */
+  aspect-ratio: 16 / 10;
 }
 @media (max-width: 640px) {
   .image-grid {
@@ -390,6 +392,8 @@ html, body {
   .image-grid img {
     height: auto;
     max-height: 18rem;
+    /* Espace réservé avant chargement (anti-saut de mise en page). */
+    aspect-ratio: 16 / 10;
   }
 }
 
@@ -580,4 +584,26 @@ a.src-bubble:hover {
 }
 .reasoning-live {
   width: 100%;
+}
+
+/* Enrichissements : Canvas, artifacts, toolbar sélection, slash */
+#canvas-wrap {
+  background: #fff;
+  min-height: 0;
+}
+#canvas-content {
+  font-family: inherit;
+  line-height: 1.6;
+}
+.artifact-preview iframe {
+  border-radius: 0 0 0.75rem 0.75rem;
+}
+#selection-toolbar {
+  max-width: calc(100vw - 16px);
+}
+#slash-popup button {
+  cursor: pointer;
+}
+#followups button {
+  background: #fff;
 }
